@@ -120,7 +120,7 @@ async function savePersonality(payload) {
     form.set("name", payload.name || "");
     form.set("instructions", payload.instructions || "");
     form.set("tools_text", payload.tools_text || "");
-    form.set("voice", payload.voice || "cedar");
+    form.set("voice", payload.voice || "");
     const url = new URL("/personalities/save_raw", window.location.origin);
     url.searchParams.set("_", Date.now().toString());
     resp = await fetchWithTimeout(url, {
@@ -137,7 +137,7 @@ async function savePersonality(payload) {
     url.searchParams.set("name", payload.name || "");
     url.searchParams.set("instructions", payload.instructions || "");
     url.searchParams.set("tools_text", payload.tools_text || "");
-    url.searchParams.set("voice", payload.voice || "cedar");
+    url.searchParams.set("voice", payload.voice || "");
     url.searchParams.set("_", Date.now().toString());
     resp = await fetchWithTimeout(url, { method: "GET" }, 5000);
     if (resp.ok) return await resp.json();
@@ -163,10 +163,6 @@ async function applyPersonality(name, { persist = false } = {}) {
   return await resp.json();
 }
 
-// Full list from https://developers.openai.com/api/docs/guides/text-to-speech/#voice-options
-// "marin" and "cedar" are recommended for gpt-realtime.
-const VOICE_FALLBACK = ["alloy", "ash", "ballad", "cedar", "coral", "echo", "marin", "sage", "shimmer", "verse"];
-
 async function getVoices() {
   try {
     const url = new URL("/voices", window.location.origin);
@@ -175,7 +171,7 @@ async function getVoices() {
     if (!resp.ok) throw new Error("voices_failed");
     return await resp.json();
   } catch (e) {
-    return VOICE_FALLBACK;
+    return [];
   }
 }
 
@@ -394,7 +390,7 @@ async function init() {
       const data = await loadPersonality(selected);
       pInstr.value = data.instructions || "";
       pTools.value = data.tools_text || "";
-      pVoice.value = data.voice || "cedar";
+      pVoice.value = data.voice || pVoice.options[0]?.value || "";
       // Available tools as checkboxes
       renderToolCheckboxes(data.available_tools, data.enabled_tools);
       attachToolHandlers();
@@ -447,7 +443,7 @@ async function init() {
       pAvail.querySelectorAll('input[type="checkbox"]').forEach((el) => {
         el.checked = false;
       });
-      pVoice.value = "cedar";
+      pVoice.value = pVoice.options[0]?.value || "";
       pStatus.textContent = "Fill fields and click Save.";
       pStatus.className = "status";
     });
@@ -468,7 +464,7 @@ async function init() {
           name,
           instructions: pInstr.value || "",
           tools_text: pTools.value || "",
-          voice: pVoice.value || "cedar",
+          voice: pVoice.value || "",
         });
         // Refresh select choices
         pSelect.innerHTML = "";
