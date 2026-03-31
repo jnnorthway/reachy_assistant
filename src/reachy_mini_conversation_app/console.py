@@ -252,11 +252,18 @@ class LocalStream:
         def _favicon() -> Response:
             return Response(status_code=204)
 
-        # GET /status -> whether key is set
+        # GET /status -> current backend and whether credentials are required
         @self._settings_app.get("/status")
         def _status() -> JSONResponse:
             has_key = bool(config.OPENAI_API_KEY and str(config.OPENAI_API_KEY).strip())
-            return JSONResponse({"has_key": has_key})
+            credentials_required = config.BACKEND_PROVIDER == "openai"
+            return JSONResponse(
+                {
+                    "backend_provider": config.BACKEND_PROVIDER,
+                    "credentials_required": credentials_required,
+                    "has_key": has_key,
+                }
+            )
 
         # GET /ready -> whether backend finished loading tools
         @self._settings_app.get("/ready")

@@ -6,7 +6,7 @@ async function fetchStatus() {
     if (!resp.ok) throw new Error("status error");
     return await resp.json();
   } catch (e) {
-    return { has_key: false, error: true };
+    return { has_key: false, credentials_required: false, error: true };
   }
 }
 
@@ -218,8 +218,8 @@ async function init() {
   show(configuredPanel, false);
   show(personalityPanel, false);
 
-  const st = (await waitForStatus()) || { has_key: false };
-  if (st.has_key) {
+  const st = (await waitForStatus()) || { has_key: false, credentials_required: false };
+  if (st.credentials_required && st.has_key) {
     statusEl.textContent = "";
     show(configuredPanel, true);
   }
@@ -277,7 +277,7 @@ async function init() {
     }
   });
 
-  if (!st.has_key) {
+  if (st.credentials_required && !st.has_key) {
     statusEl.textContent = "";
     show(formPanel, true);
     show(loading, false);
