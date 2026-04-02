@@ -570,7 +570,8 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                             input_transcript.item_id = item_id
                             input_transcript.deltas = [delta]
                         else:
-                            input_transcript.deltas.append(delta)
+                            # speech-to-speech currently sends partial snapshots, not suffix-only deltas
+                            input_transcript.deltas = [delta]
 
                         current_partial = "".join(input_transcript.deltas)
                         logger.info(

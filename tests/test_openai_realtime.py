@@ -323,6 +323,96 @@ async def test_user_speech_events_reset_idle_timer(monkeypatch: Any) -> None:
 
 
 @pytest.mark.asyncio
+async def test_partial_transcription_uses_latest_snapshot(monkeypatch: Any) -> None:
+    """Partial transcription snapshots should replace older snapshots for the same item."""
+    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda: "test")
+    monkeypatch.setattr(rt_mod, "get_session_voice", lambda default=rt_mod.DEFAULT_VOICE: "alloy")
+    monkeypatch.setattr(rt_mod, "get_tool_specs", lambda: [])
+
+    class FakeEvent:
+        def __init__(self, etype: str, **kwargs: Any) -> None:
+            self.type = etype
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+
+    class FakeSession:
+        async def update(self, **_kw: Any) -> None:
+            pass
+
+    class FakeInputAudioBuffer:
+        async def append(self, **_kw: Any) -> None:
+            pass
+
+    class FakeItem:
+        async def create(self, **_kw: Any) -> None:
+            pass
+
+    class FakeConversation:
+        item = FakeItem()
+
+    class FakeResponse:
+        async def create(self, **_kw: Any) -> None:
+            pass
+
+        async def cancel(self, **_kw: Any) -> None:
+            pass
+
+    class FakeConn:
+        session = FakeSession()
+        input_audio_buffer = FakeInputAudioBuffer()
+        conversation = FakeConversation()
+        response = FakeResponse()
+
+        def __init__(self) -> None:
+            self._events = iter(
+                [
+                    FakeEvent("conversation.item.input_audio_transcription.delta", item_id="item-1", delta="Hey"),
+                    FakeEvent("conversation.item.input_audio_transcription.delta", item_id="item-1", delta="Hey, how are you?"),
+                ]
+            )
+
+        async def __aenter__(self) -> "FakeConn":
+            return self
+
+        async def __aexit__(self, *_args: Any) -> bool:
+            return False
+
+        async def close(self) -> None:
+            pass
+
+        def __aiter__(self) -> "FakeConn":
+            return self
+
+        async def __anext__(self) -> FakeEvent:
+            try:
+                return next(self._events)
+            except StopIteration:
+                raise StopAsyncIteration
+
+    class FakeRealtime:
+        def connect(self, **_kw: Any) -> FakeConn:
+            return FakeConn()
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.realtime = FakeRealtime()
+
+    deps = ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock())
+    handler = OpenaiRealtimeHandler(deps)
+    handler.client = FakeClient()
+
+    start_up = MagicMock()
+    shutdown = AsyncMock()
+    object.__setattr__(handler.tool_manager, "start_up", start_up)
+    object.__setattr__(handler.tool_manager, "shutdown", shutdown)
+
+    await handler._run_realtime_session()
+
+    assert handler.input_transcript_chunks_by_item.item_id == "item-1"
+    assert handler.input_transcript_chunks_by_item.deltas == ["Hey, how are you?"]
+
+
+@pytest.mark.asyncio
 async def test_emit_skips_idle_signal_while_response_active(monkeypatch: Any) -> None:
     """Idle tools should not trigger while a response is still active."""
     movement_manager = MagicMock()
