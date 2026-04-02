@@ -43,8 +43,8 @@ from reachy_mini_conversation_app.tools.background_tool_manager import (
 
 logger = logging.getLogger(__name__)
 
-OPEN_AI_INPUT_SAMPLE_RATE: Final[Literal[24000]] = 24000
-OPEN_AI_OUTPUT_SAMPLE_RATE: Final[Literal[24000]] = 24000
+OPENAI_REALTIME_SAMPLE_RATE: Final[int] = 24000
+S2S_REALTIME_SAMPLE_RATE: Final[int] = 16000
 
 # Cost tracking from usage data (pricing as of Feb 2026 https://openai.com/api/pricing/)
 AUDIO_INPUT_COST_PER_1M = 32.0
@@ -83,21 +83,17 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
 
     def __init__(self, deps: ToolDependencies, gradio_mode: bool = False, instance_path: Optional[str] = None):
         """Initialize the handler."""
+        sample_rate = self._get_realtime_sample_rate()
         super().__init__(
             expected_layout="mono",
-            output_sample_rate=OPEN_AI_OUTPUT_SAMPLE_RATE,
-            input_sample_rate=OPEN_AI_INPUT_SAMPLE_RATE,
+            output_sample_rate=sample_rate,
+            input_sample_rate=sample_rate,
         )
-
-        # Override typing of the sample rates to match OpenAI's requirements
-        self.output_sample_rate: Literal[24000] = self.output_sample_rate
-        self.input_sample_rate: Literal[24000] = self.input_sample_rate
 
         self.deps = deps
 
-        # Override type annotations for OpenAI strict typing (only for values used in API)
-        self.output_sample_rate = OPEN_AI_OUTPUT_SAMPLE_RATE
-        self.input_sample_rate = OPEN_AI_INPUT_SAMPLE_RATE
+        self.output_sample_rate = sample_rate
+        self.input_sample_rate = sample_rate
 
         self.client: AsyncOpenAI
         self.connection: AsyncRealtimeConnection | None = None
@@ -134,6 +130,13 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
         self._response_done_event: asyncio.Event = asyncio.Event()
         self._response_done_event.set()
         self._last_response_rejected: bool = False
+
+    @staticmethod
+    def _get_realtime_sample_rate() -> int:
+        """Use backend-native audio rates when possible."""
+        if config.BACKEND_PROVIDER == "speech-to-speech":
+            return S2S_REALTIME_SAMPLE_RATE
+        return OPENAI_REALTIME_SAMPLE_RATE
 
     def _mark_activity(self, reason: str) -> None:
         """Record non-idle conversation activity for the idle timer."""

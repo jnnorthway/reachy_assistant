@@ -627,8 +627,9 @@ async def test_run_realtime_session_uses_default_voice_for_lb_allocated_sessions
     await handler._run_realtime_session()
 
     session = captured_update["session"]
+    assert session["audio"]["input"]["format"]["rate"] == 16000
+    assert session["audio"]["output"]["format"]["rate"] == 16000
     output = session["audio"]["output"]
-    assert output["format"]["rate"] == 24000
     assert output["voice"] == rt_mod.DEFAULT_VOICE
 
 
@@ -700,6 +701,17 @@ async def test_run_realtime_session_passes_allocated_session_query(monkeypatch: 
     await handler._run_realtime_session()
 
     assert captured_connect["extra_query"] == {"session_token": "abc123"}
+
+
+@pytest.mark.asyncio
+async def test_handler_uses_openai_sample_rate_for_openai_backend(monkeypatch: Any) -> None:
+    """OpenAI backend should keep the 24 kHz realtime audio configuration."""
+    monkeypatch.setattr(rt_mod.config, "BACKEND_PROVIDER", "openai")
+
+    handler = OpenaiRealtimeHandler(ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock()))
+
+    assert handler.input_sample_rate == 24000
+    assert handler.output_sample_rate == 24000
 
 
 @pytest.mark.asyncio
