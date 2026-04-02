@@ -229,6 +229,119 @@ async def test_non_idle_tool_call_does_not_queue_progress_response(monkeypatch: 
     safe_response_create.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_user_speech_events_reset_idle_timer(monkeypatch: Any) -> None:
+    """User speech/transcription events should postpone idle behavior."""
+    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda: "test")
+    monkeypatch.setattr(rt_mod, "get_session_voice", lambda default=rt_mod.DEFAULT_VOICE: "alloy")
+    monkeypatch.setattr(rt_mod, "get_tool_specs", lambda: [])
+
+    class FakeEvent:
+        def __init__(self, etype: str, **kwargs: Any) -> None:
+            self.type = etype
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+
+    class FakeSession:
+        async def update(self, **_kw: Any) -> None:
+            pass
+
+    class FakeInputAudioBuffer:
+        async def append(self, **_kw: Any) -> None:
+            pass
+
+    class FakeItem:
+        async def create(self, **_kw: Any) -> None:
+            pass
+
+    class FakeConversation:
+        item = FakeItem()
+
+    class FakeResponse:
+        async def create(self, **_kw: Any) -> None:
+            pass
+
+        async def cancel(self, **_kw: Any) -> None:
+            pass
+
+    class FakeConn:
+        session = FakeSession()
+        input_audio_buffer = FakeInputAudioBuffer()
+        conversation = FakeConversation()
+        response = FakeResponse()
+
+        def __init__(self) -> None:
+            self._events = iter(
+                [
+                    FakeEvent("input_audio_buffer.speech_started"),
+                    FakeEvent("conversation.item.input_audio_transcription.completed", transcript="hello there"),
+                ]
+            )
+
+        async def __aenter__(self) -> "FakeConn":
+            return self
+
+        async def __aexit__(self, *_args: Any) -> bool:
+            return False
+
+        async def close(self) -> None:
+            pass
+
+        def __aiter__(self) -> "FakeConn":
+            return self
+
+        async def __anext__(self) -> FakeEvent:
+            try:
+                return next(self._events)
+            except StopIteration:
+                raise StopAsyncIteration
+
+    class FakeRealtime:
+        def connect(self, **_kw: Any) -> FakeConn:
+            return FakeConn()
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.realtime = FakeRealtime()
+
+    movement_manager = MagicMock()
+    deps = ToolDependencies(reachy_mini=MagicMock(), movement_manager=movement_manager)
+    handler = OpenaiRealtimeHandler(deps)
+    handler.client = FakeClient()
+    handler.last_activity_time = asyncio.get_running_loop().time() - 60.0
+
+    start_up = MagicMock()
+    shutdown = AsyncMock()
+    object.__setattr__(handler.tool_manager, "start_up", start_up)
+    object.__setattr__(handler.tool_manager, "shutdown", shutdown)
+
+    previous_activity_time = handler.last_activity_time
+    await handler._run_realtime_session()
+
+    assert handler.last_activity_time > previous_activity_time
+    movement_manager.set_listening.assert_any_call(True)
+
+
+@pytest.mark.asyncio
+async def test_emit_skips_idle_signal_while_response_active(monkeypatch: Any) -> None:
+    """Idle tools should not trigger while a response is still active."""
+    movement_manager = MagicMock()
+    movement_manager.is_idle.return_value = True
+    deps = ToolDependencies(reachy_mini=MagicMock(), movement_manager=movement_manager)
+    handler = OpenaiRealtimeHandler(deps)
+    handler.last_activity_time = asyncio.get_running_loop().time() - 60.0
+    handler._response_done_event.clear()
+
+    send_idle_signal = AsyncMock()
+    object.__setattr__(handler, "send_idle_signal", send_idle_signal)
+    monkeypatch.setattr(rt_mod, "wait_for_item", AsyncMock(return_value=None))
+
+    result = await handler.emit()
+
+    assert result is None
+    send_idle_signal.assert_not_awaited()
+
+
 def test_format_timestamp_uses_wall_clock() -> None:
     """Test that format_timestamp uses wall clock time."""
     loop = asyncio.new_event_loop()

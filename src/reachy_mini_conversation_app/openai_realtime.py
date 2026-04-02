@@ -135,6 +135,11 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
         self._response_done_event.set()
         self._last_response_rejected: bool = False
 
+    def _mark_activity(self, reason: str) -> None:
+        """Record non-idle conversation activity for the idle timer."""
+        self.last_activity_time = asyncio.get_event_loop().time()
+        logger.debug("last activity time updated to %s (%s)", self.last_activity_time, reason)
+
     def copy(self) -> "OpenaiRealtimeHandler":
         """Create a copy of the handler."""
         return OpenaiRealtimeHandler(self.deps, self.gradio_mode, self.instance_path)
@@ -378,6 +383,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
             return
 
         try:
+            self._mark_activity("tool_result_ready")
             # TODO: refactor this since it's repeated here, in the camera branch below, and in send_idle_signal
             if isinstance(bg_tool.id, str):
                 await self.connection.conversation.item.create(
@@ -517,6 +523,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                 async for event in self.connection:
                     logger.debug(f"OpenAI event: {event.type}")
                     if event.type == "input_audio_buffer.speech_started":
+                        self._mark_activity("user_speech_started")
                         if hasattr(self, "_clear_queue") and callable(self._clear_queue):
                             self._clear_queue()
                         if self.deps.head_wobbler is not None:
@@ -525,6 +532,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                         logger.debug("User speech started")
 
                     if event.type == "input_audio_buffer.speech_stopped":
+                        self._mark_activity("user_speech_stopped")
                         self.deps.movement_manager.set_listening(False)
                         logger.debug("User speech stopped - server will auto-commit with VAD")
 
@@ -532,6 +540,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                         logger.debug("response completed")
 
                     if event.type == "response.created":
+                        self._mark_activity("response_created")
                         self._response_done_event.clear()
                         logger.debug("Response created (active)")
 
@@ -550,6 +559,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                             logger.warning("No usage data available for cost tracking")
 
                     if event.type == "conversation.item.input_audio_transcription.delta":
+                        self._mark_activity("user_transcription_delta")
                         logger.debug(f"User partial transcript: {event.delta}")
 
                         item_id = event.item_id
@@ -579,6 +589,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
 
                     # Handle completed transcription (user finished speaking)
                     if event.type == "conversation.item.input_audio_transcription.completed":
+                        self._mark_activity("user_transcription_completed")
                         logger.debug(f"User transcript: {event.transcript}")
 
                         # Cancel any pending partial emission
@@ -593,6 +604,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
 
                     # Handle assistant transcription
                     if event.type == "response.output_audio_transcript.done":
+                        self._mark_activity("assistant_transcript_done")
                         logger.debug(f"Assistant transcript: {event.transcript}")
                         await self.output_queue.put(AdditionalOutputs({"role": "assistant", "content": event.transcript}))
 
@@ -600,8 +612,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                     if event.type == "response.output_audio.delta":
                         if self.deps.head_wobbler is not None:
                             self.deps.head_wobbler.feed(event.delta)
-                        self.last_activity_time = asyncio.get_event_loop().time()
-                        logger.debug("last activity time updated to %s", self.last_activity_time)
+                        self._mark_activity("assistant_audio_delta")
                         await self.output_queue.put(
                             (
                                 self.output_sample_rate,
@@ -611,6 +622,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
 
                     # ---- tool-calling plumbing ----
                     if event.type == "response.function_call_arguments.done":
+                        self._mark_activity("tool_call_received")
                         tool_name = getattr(event, "name", None)
                         args_json_str = getattr(event, "arguments", None)
                         call_id: str = str(getattr(event, "call_id", uuid.uuid4()))
@@ -733,7 +745,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
 
         # Handle idle
         idle_duration = asyncio.get_event_loop().time() - self.last_activity_time
-        if idle_duration > 15.0 and self.deps.movement_manager.is_idle():
+        if idle_duration > 15.0 and self._response_done_event.is_set() and self.deps.movement_manager.is_idle():
             try:
                 await self.send_idle_signal(idle_duration)
             except Exception as e:
