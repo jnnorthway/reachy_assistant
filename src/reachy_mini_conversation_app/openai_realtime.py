@@ -925,12 +925,6 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
         base_path = path[: -len("/realtime")]
         logger.info("Allocated realtime session %s", payload.get("session_id") or "<unknown>")
         self._realtime_connect_query = dict(parse_qsl(parsed.query, keep_blank_values=True))
-        import os
-        return AsyncOpenAI(
-            api_key=os.environ.get("HF_TOKEN"),
-            base_url="http://127.0.0.1:8765/v1",
-            websocket_base_url="ws://127.0.0.1:8765/v1",
-        )
         return AsyncOpenAI(
             api_key=resolved_api_key or "DUMMY",
             base_url=urlunsplit(("https" if parsed.scheme == "wss" else "http", parsed.netloc, base_path, "", "")),
