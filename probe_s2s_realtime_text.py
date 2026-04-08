@@ -16,6 +16,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 import websockets
@@ -32,6 +33,22 @@ from reachy_mini_conversation_app.prompts import get_session_instructions, get_s
 
 def _pcm(rate: int) -> dict[str, Any]:
     return {"type": "audio/pcm", "rate": rate}
+
+
+def add_model_query_param(ws_url: str) -> str:
+    """Mirror the conversation app's realtime connect query."""
+    parsed = urlsplit(ws_url)
+    query_items = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query_items.setdefault("model", config.OPENAI_MODEL_NAME)
+    return urlunsplit(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            urlencode(query_items),
+            parsed.fragment,
+        )
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -107,8 +124,11 @@ async def main() -> None:
     if not isinstance(connect_url, str) or not connect_url:
         raise SystemExit(f"Allocator returned no valid connect_url: {allocation!r}")
 
+    connect_url = add_model_query_param(connect_url)
+
     print(f"allocated session: {session_id or '<unknown>'}")
     print(f"allocation_time_ms: {(t1 - t0) * 1000:.0f}")
+    print(f"model: {config.OPENAI_MODEL_NAME}")
 
     async with websockets.connect(
         connect_url,

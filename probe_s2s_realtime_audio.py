@@ -22,6 +22,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 
@@ -139,6 +140,28 @@ def parse_args() -> ProbeArguments:
     parser.add_argument("--list-devices", action="store_true")
     namespace = parser.parse_args()
     return ProbeArguments(**vars(namespace))
+
+
+def add_model_query_param(ws_url: str) -> str:
+    """Mirror the conversation app's realtime connect query.
+
+    The session allocator returns a `connect_url` with the session token, while
+    the app also adds `model=<OPENAI_MODEL_NAME>` when opening the realtime
+    websocket. Some deployed backends require that query parameter for
+    `session.update` to be accepted.
+    """
+    parsed = urlsplit(ws_url)
+    query_items = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query_items.setdefault("model", config.OPENAI_MODEL_NAME)
+    return urlunsplit(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            urlencode(query_items),
+            parsed.fragment,
+        )
+    )
 
 
 def require_runtime_dependencies() -> None:
@@ -479,8 +502,11 @@ async def listen_and_play_ws(args: ProbeArguments) -> None:
             print(f"direct compute websocket: {allocated_session.websocket_url}")
         headers = {}
 
+    ws_url = add_model_query_param(ws_url)
+
     install_signal_handlers()
     print(f"provider: {config.BACKEND_PROVIDER}")
+    print(f"model: {config.OPENAI_MODEL_NAME}")
     print(f"voice: {voice}")
     print(f"prompt_chars: {len(instructions)}")
 
