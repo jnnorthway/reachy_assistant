@@ -219,22 +219,42 @@ def _maybe_pcm_format(rate: int) -> dict[str, object]:
     return {"type": "audio/pcm", "rate": rate}
 
 
+def _session_audio_format_for_provider(rate: int) -> dict[str, object] | None:
+    """Return a session.update format block, or None to omit it.
+
+    The deployed speech-to-speech backend rejects session.update payloads that
+    explicitly set audio/pcm at 16 kHz. Omitting the format lets the backend
+    keep its default 16 kHz realtime session configuration.
+    """
+    if config.BACKEND_PROVIDER == "speech-to-speech" and rate == 16000:
+        return None
+    return _maybe_pcm_format(rate)
+
+
 def build_session_update_payload(args: ProbeArguments, instructions: str, voice: str) -> dict[str, object]:
+    input_audio: dict[str, object] = {
+        "transcription": {"model": "gpt-4o-transcribe", "language": "en"},
+        "turn_detection": {"type": "server_vad", "interrupt_response": True},
+    }
+    input_format = _session_audio_format_for_provider(args.send_rate)
+    if input_format is not None:
+        input_audio["format"] = input_format
+
+    output_audio: dict[str, object] = {
+        "voice": voice,
+    }
+    output_format = _session_audio_format_for_provider(args.recv_rate)
+    if output_format is not None:
+        output_audio["format"] = output_format
+
     return {
         "type": "session.update",
         "session": {
             "type": "realtime",
             "instructions": instructions,
             "audio": {
-                "input": {
-                    "format": _maybe_pcm_format(args.send_rate),
-                    "transcription": {"model": "gpt-4o-transcribe", "language": "en"},
-                    "turn_detection": {"type": "server_vad", "interrupt_response": True},
-                },
-                "output": {
-                    "format": _maybe_pcm_format(args.recv_rate),
-                    "voice": voice,
-                },
+                "input": input_audio,
+                "output": output_audio,
             },
             "tools": get_tool_specs(),
             "tool_choice": "auto",
