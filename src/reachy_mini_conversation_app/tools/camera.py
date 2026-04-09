@@ -34,8 +34,6 @@ class Camera(Tool):
             logger.warning("camera: empty question")
             return {"error": "question must be a non-empty string"}
 
-        logger.info("Tool call: camera question=%s", question[:120])
-
         if deps.camera_worker is not None:
             frame = deps.camera_worker.get_latest_frame()
             if frame is None:
@@ -44,6 +42,14 @@ class Camera(Tool):
         else:
             logger.error("Camera worker not available")
             return {"error": "Camera worker not available"}
+
+        height, width = frame.shape[:2]
+        logger.info(
+            "Tool call: camera question=%s frame=%sx%s",
+            question[:120],
+            width,
+            height,
+        )
 
         if deps.vision_processor is not None:
             vision_result = await asyncio.to_thread(
@@ -60,5 +66,16 @@ class Camera(Tool):
         if not success:
             raise RuntimeError("Failed to encode frame as JPEG")
 
+        logger.info(
+            "camera: encoded JPEG frame=%sx%s jpeg_bytes=%s",
+            width,
+            height,
+            buffer.nbytes,
+        )
         b64_encoded = base64.b64encode(buffer.tobytes()).decode("utf-8")
-        return {"b64_im": b64_encoded}
+        return {
+            "image_width": width,
+            "image_height": height,
+            "jpeg_bytes": int(buffer.nbytes),
+            "b64_im": b64_encoded,
+        }

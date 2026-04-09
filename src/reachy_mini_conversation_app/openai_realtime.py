@@ -506,6 +506,11 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                 if not isinstance(b64_im, str):
                     logger.warning("Unexpected type for b64_im: %s", type(b64_im))
                     b64_im = str(b64_im)
+                image_width = tool_result.get("image_width")
+                image_height = tool_result.get("image_height")
+                jpeg_bytes = tool_result.get("jpeg_bytes")
+                if not isinstance(jpeg_bytes, int):
+                    jpeg_bytes = (len(b64_im) * 3) // 4
                 await self.connection.conversation.item.create(
                     item={
                         "type": "message",
@@ -518,7 +523,18 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                         ],
                     },
                 )
-                logger.info("Added camera image to conversation")
+                if isinstance(image_width, int) and isinstance(image_height, int):
+                    logger.info(
+                        "Added camera image to conversation frame=%sx%s jpeg_bytes=%s",
+                        image_width,
+                        image_height,
+                        jpeg_bytes,
+                    )
+                else:
+                    logger.info(
+                        "Added camera image to conversation jpeg_bytes=%s",
+                        jpeg_bytes,
+                    )
 
                 if self.deps.camera_worker is not None:
                     np_img = self.deps.camera_worker.get_latest_frame()
