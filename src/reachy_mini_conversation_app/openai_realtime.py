@@ -272,7 +272,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
 
             try:
                 instructions = get_session_instructions()
-                voice = get_session_voice(default=None)
+                voice = get_session_voice(default=DEFAULT_VOICE)
             except BaseException as e:  # catch SystemExit from prompt loader without crashing
                 logger.error("Failed to resolve personality content: %s", e)
                 return f"Failed to apply personality: {e}"
@@ -280,18 +280,16 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
             # Attempt a live update first, then force a full restart to ensure it sticks
             if self.connection is not None:
                 try:
-                    session_kwargs: dict[str, Any] = {
-                        "type": "realtime",
-                        "instructions": instructions,
-                    }
-                    if voice:
-                        session_kwargs["audio"] = RealtimeAudioConfigParam(
-                            output=RealtimeAudioConfigOutputParam(
-                                voice=voice,
-                            ),
-                        )
                     await self.connection.session.update(
-                        session=RealtimeSessionCreateRequestParam(**session_kwargs),
+                        session=RealtimeSessionCreateRequestParam(
+                            type="realtime",
+                            instructions=instructions,
+                            audio=RealtimeAudioConfigParam(
+                                output=RealtimeAudioConfigOutputParam(
+                                    voice=voice,
+                                ),
+                            ),
+                        ),
                     )
                     logger.info("Applied personality via live update: %s", profile or "built-in default")
                 except Exception as e:
@@ -608,12 +606,6 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
             extra_query=self._realtime_connect_query,
         ) as conn:
             try:
-                voice = get_session_voice(default=None)
-                output_audio_config: dict[str, Any] = {
-                    "format": AudioPCM(type="audio/pcm", rate=output_rate), # type: ignore[typeddict-item]
-                }
-                if voice:
-                    output_audio_config["voice"] = voice
                 session_config = RealtimeSessionCreateRequestParam(
                     type="realtime",
                     instructions=get_session_instructions(),
@@ -623,7 +615,10 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                             transcription=AudioTranscriptionParam(model="gpt-4o-transcribe", language="en"),
                             turn_detection=ServerVad(type="server_vad", interrupt_response=True),
                         ),
-                        output=RealtimeAudioConfigOutputParam(**output_audio_config),
+                        output=RealtimeAudioConfigOutputParam(
+                            format=AudioPCM(type="audio/pcm", rate=output_rate), # type: ignore[typeddict-item]
+                            voice=get_session_voice(default=DEFAULT_VOICE),
+                        ),
                     ),
                     tools=get_tool_specs(), # type: ignore[typeddict-item]
                     tool_choice="auto",
@@ -632,7 +627,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                 logger.info(
                     "Realtime session initialized with profile=%r voice=%r",
                     getattr(config, "REACHY_MINI_CUSTOM_PROFILE", None),
-                    voice,
+                    get_session_voice(default=DEFAULT_VOICE),
                 )
                 # If we reached here, the session update succeeded which implies the API key worked.
                 # Persist the key to a newly created .env (copied from .env.example) if needed.

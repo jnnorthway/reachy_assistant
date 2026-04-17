@@ -91,14 +91,11 @@ def get_session_instructions() -> str:
         sys.exit(1)
 
 
-def get_session_voice(default: str | None = DEFAULT_VOICE) -> str | None:
+def get_session_voice(default: str = DEFAULT_VOICE) -> str:
     """Resolve the voice to use for the session.
 
     If a custom profile is selected and contains a voice.txt, return its
-    trimmed content; otherwise return the provided default.
-
-    Pass ``default=None`` to omit ``session.audio.output.voice`` when no
-    profile-specific voice has been configured.
+    trimmed content; otherwise return the provided default ("cedar").
     """
     profile = config.REACHY_MINI_CUSTOM_PROFILE
     if not profile:
