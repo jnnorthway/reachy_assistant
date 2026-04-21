@@ -63,7 +63,10 @@ class VisionProcessor:
     def initialize(self) -> None:
         """Load model and processor onto the selected device."""
         logger.info("Loading SmolVLM2 model on %s (HF_HOME=%s)", self.device, config.HF_HOME)
-        processor = cast(ProcessorMixin, AutoProcessor.from_pretrained(self.vision_config.model_path))
+        processor = cast(
+            ProcessorMixin,
+            cast(Any, AutoProcessor).from_pretrained(self.vision_config.model_path),
+        )
 
         model_kwargs: dict[str, object] = {
             "dtype": torch.bfloat16 if self.device == "cuda" else torch.float32,
