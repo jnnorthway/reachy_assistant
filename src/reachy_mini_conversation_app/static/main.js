@@ -11,10 +11,10 @@ const BACKEND_META = {
     saveButton: "Save key",
     changeButton: "Change OpenAI key",
     readyTitle: "OpenAI Realtime ready",
-    readyCopy: "OpenAI Realtime is configured. You can jump straight to personalities.",
-    formCopy: "OpenAI Realtime uses the distributed key when available. Paste your own key if you want an override or need a fallback.",
-    requiredCredentialsCopy: "OpenAI Realtime usually uses the distributed key. If it is unavailable here, paste your own OpenAI key to continue.",
-    note: "OpenAI Realtime uses the distributed OpenAI key. You can still paste your own key if you want to override it.",
+    readyCopy: "OpenAI Realtime is configured. Your saved OpenAI key is ready to use.",
+    formCopy: "Paste your OPENAI_API_KEY once and we will store it locally for the headless conversation loop.",
+    requiredCredentialsCopy: "OpenAI Realtime requires your own OPENAI_API_KEY before you can switch.",
+    note: "OpenAI Realtime requires your own OPENAI_API_KEY.",
   },
   [GEMINI_BACKEND]: {
     label: "Gemini Live",
@@ -27,7 +27,7 @@ const BACKEND_META = {
     readyCopy: "Gemini Live is configured. Your saved Gemini token is ready to use.",
     formCopy: "Paste your GEMINI_API_KEY once and we will store it locally for the headless conversation loop.",
     requiredCredentialsCopy: "Gemini Live requires your own GEMINI_API_KEY before you can switch.",
-    note: "OpenAI Realtime uses the distributed OpenAI key. Gemini Live needs your own GEMINI_API_KEY.",
+    note: "OpenAI Realtime requires OPENAI_API_KEY. Gemini Live needs GEMINI_API_KEY.",
   },
   [S2S_BACKEND]: {
     label: "Speech-to-speech",

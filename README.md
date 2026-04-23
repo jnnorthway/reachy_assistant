@@ -123,7 +123,7 @@ Some wheels (like PyTorch) are large and require compatible CUDA or CPU buildsâ€
 
 | Variable | Description |
 |----------|-------------|
-| `OPENAI_API_KEY` | Optional override or fallback for OpenAI mode. In the headless settings flow, the app can use bundled OpenAI access when available; set your own key to override it or provide a fallback. |
+| `OPENAI_API_KEY` | Required for OpenAI mode. |
 | `GEMINI_API_KEY` | Required for Gemini mode. Also accepts `GOOGLE_API_KEY`. Get one at [aistudio.google.com](https://aistudio.google.com/apikey). |
 | `BACKEND_PROVIDER` | Realtime backend to use: `openai` (default), `gemini`, or `speech-to-speech`. |
 | `MODEL_NAME` | Optional model override for the selected backend. Defaults to `gpt-realtime` for OpenAI and speech-to-speech, and `gemini-3.1-flash-live-preview` for Gemini Live. |

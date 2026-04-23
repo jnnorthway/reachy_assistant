@@ -465,23 +465,8 @@ class LocalStream:
 
         active_backend = self._active_backend()
 
-        # If key is still missing, try to download one from HuggingFace (OpenAI only)
-        if active_backend == OPENAI_BACKEND and not self._has_required_key(active_backend):
-            logger.info("OPENAI_API_KEY not set, attempting to download from HuggingFace...")
-            try:
-                from gradio_client import Client
-
-                client = Client("HuggingFaceM4/gradium_setup", verbose=False)
-                key, _ = client.predict(api_name="/claim_b_key")
-                if key and key.strip():
-                    logger.info("Successfully downloaded API key from HuggingFace")
-                    # Persist it immediately
-                    self._persist_api_key(key)
-            except Exception as e:
-                logger.warning(f"Failed to download API key from HuggingFace: {e}")
-
         # Always expose settings UI if a settings app is available
-        # (do this AFTER loading/downloading the key so status endpoint sees the right value)
+        # (do this AFTER loading the instance .env so status endpoint sees the right value)
         self._init_settings_ui_if_needed()
 
         # If key is still missing -> wait until provided via the settings UI

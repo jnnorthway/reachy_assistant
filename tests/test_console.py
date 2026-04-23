@@ -1,5 +1,6 @@
 """Tests for the headless console stream."""
 
+import sys
 import asyncio
 import threading
 from types import SimpleNamespace
@@ -362,3 +363,37 @@ def test_local_stream_persist_personality_clears_legacy_startup_env_overrides(tm
 
     assert settings == StartupSettings(voice="Aiden")
     assert applied_profiles == [None]
+
+
+def test_local_stream_launch_waits_for_manual_openai_key_without_download(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OpenAI startup should wait for settings input instead of claiming a bundled key."""
+    monkeypatch.setattr(config, "BACKEND_PROVIDER", "openai")
+    monkeypatch.setattr(config, "OPENAI_API_KEY", None)
+    monkeypatch.setenv("BACKEND_PROVIDER", "openai")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    fake_client_ctor = MagicMock(side_effect=AssertionError("launch() should not try to download an OpenAI key"))
+    monkeypatch.setitem(sys.modules, "gradio_client", SimpleNamespace(Client=fake_client_ctor))
+
+    media = SimpleNamespace(
+        start_recording=MagicMock(),
+        start_playing=MagicMock(),
+    )
+    robot = SimpleNamespace(media=media)
+    stream = LocalStream(MagicMock(), robot, settings_app=FastAPI(), instance_path=str(tmp_path))
+    stream._active_backend_name = "openai"
+
+    init_settings_ui = MagicMock()
+    monkeypatch.setattr(stream, "_init_settings_ui_if_needed", init_settings_ui)
+    monkeypatch.setattr(stream, "_has_required_key", MagicMock(side_effect=[False, False]))
+    monkeypatch.setattr("reachy_mini_conversation_app.console.time.sleep", MagicMock(side_effect=KeyboardInterrupt))
+
+    stream.launch()
+
+    fake_client_ctor.assert_not_called()
+    init_settings_ui.assert_called_once()
+    media.start_recording.assert_not_called()
+    media.start_playing.assert_not_called()
