@@ -357,9 +357,8 @@ async function init() {
     const customHost = s2sHostPreset.value === "custom";
     show(s2sDirectFields, localMode);
     show(s2sHostCustomWrap, localMode && customHost);
-    s2sModeCopy.textContent = localMode
-      ? "Use localhost for a speech-to-speech server on the same machine, or switch to a custom LAN IP or hostname."
-      : "Use the Hugging Face deployment saved as S2S_REALTIME_SESSION_URL.";
+    show(s2sModeCopy, !localMode);
+    s2sModeCopy.textContent = localMode ? "" : "Use the Hugging Face deployment saved as S2S_REALTIME_SESSION_URL.";
 
     if (!localMode) {
       setStatusMessage(s2sPreview, "Speech-to-speech will use the configured Hugging Face deployment.");

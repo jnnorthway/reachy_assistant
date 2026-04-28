@@ -355,6 +355,10 @@ button.ghost:hover { border-color: rgba(94, 240, 193, 0.4); }
   font-size: 13px;
   line-height: 1.5;
 }
+.s2s-help a {
+  color: var(--accent);
+  text-underline-offset: 2px;
+}
 .s2s-config-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
