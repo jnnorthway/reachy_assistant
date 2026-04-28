@@ -1135,7 +1135,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
 
         session_url = get_s2s_session_url()
         if not session_url:
-            raise RuntimeError("S2S_REALTIME_SESSION_URL must be set when S2S_REALTIME_CONNECTION_MODE=deployed")
+            raise RuntimeError("Built-in speech-to-speech session allocator URL is unavailable")
         if direct_realtime_url:
             logger.info("S2S_REALTIME_CONNECTION_MODE=deployed; ignoring S2S_REALTIME_WS_URL.")
 

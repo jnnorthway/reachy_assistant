@@ -75,7 +75,6 @@ function backendMeta(backend) {
 function formatBackendNote(text) {
   return text
     .replace("GEMINI_API_KEY", "<code>GEMINI_API_KEY</code>")
-    .replace("S2S_REALTIME_SESSION_URL", "<code>S2S_REALTIME_SESSION_URL</code>")
     .replace("S2S_REALTIME_WS_URL", "<code>S2S_REALTIME_WS_URL</code>");
 }
 
@@ -358,7 +357,7 @@ async function init() {
     show(s2sDirectFields, localMode);
     show(s2sHostCustomWrap, localMode && customHost);
     show(s2sModeCopy, !localMode);
-    s2sModeCopy.textContent = localMode ? "" : "Use the Hugging Face deployment saved as S2S_REALTIME_SESSION_URL.";
+    s2sModeCopy.textContent = localMode ? "" : "Use the built-in Hugging Face deployment.";
 
     if (!localMode) {
       setStatusMessage(s2sPreview, "Speech-to-speech will use the configured Hugging Face deployment.");
@@ -577,7 +576,7 @@ async function init() {
         if (e.message === "missing_s2s_session_url") {
           setStatusMessage(
             statusEl,
-            "No Hugging Face deployment URL is saved yet. Add S2S_REALTIME_SESSION_URL in the app environment first.",
+            "The built-in Hugging Face deployment URL is unavailable. Restart the app and try again.",
             "error",
           );
         } else if (e.message === "empty_s2s_host" || e.message === "invalid_s2s_host") {

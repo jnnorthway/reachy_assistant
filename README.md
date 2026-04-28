@@ -127,8 +127,7 @@ Some wheels (like PyTorch) are large and require compatible CUDA or CPU buildsâ€
 | `GEMINI_API_KEY` | Required for Gemini mode. Also accepts `GOOGLE_API_KEY`. Get one at [aistudio.google.com](https://aistudio.google.com/apikey). |
 | `BACKEND_PROVIDER` | Realtime backend to use: `openai` (default), `gemini`, or `speech-to-speech`. |
 | `MODEL_NAME` | Optional model override for the selected backend. Defaults to `gpt-realtime` for OpenAI and speech-to-speech, and `gemini-3.1-flash-live-preview` for Gemini Live. |
-| `S2S_REALTIME_CONNECTION_MODE` | Optional speech-to-speech transport selector: `deployed` uses `S2S_REALTIME_SESSION_URL`; `local` uses `S2S_REALTIME_WS_URL`. When unset, the app keeps the legacy behavior where `S2S_REALTIME_WS_URL` takes precedence if present. |
-| `S2S_REALTIME_SESSION_URL` | Session allocation URL for the deployed speech-to-speech load balancer. Used when `BACKEND_PROVIDER=speech-to-speech` and `S2S_REALTIME_CONNECTION_MODE=deployed`. |
+| `S2S_REALTIME_CONNECTION_MODE` | Optional speech-to-speech transport selector: `deployed` uses the built-in Hugging Face session allocator; `local` uses `S2S_REALTIME_WS_URL`. When unset, the app keeps the legacy behavior where `S2S_REALTIME_WS_URL` takes precedence if present. |
 | `S2S_REALTIME_WS_URL` | Direct speech-to-speech realtime endpoint for local or LAN backends. Accepts either a base URL like `ws://127.0.0.1:8765/v1` or the full websocket URL `ws://127.0.0.1:8765/v1/realtime`. Used when `S2S_REALTIME_CONNECTION_MODE=local`; still takes precedence when the mode is unset for compatibility. |
 | `HF_HOME` | Cache directory for local Hugging Face downloads (only used with `--local-vision` flag, defaults to `./cache`). |
 | `HF_TOKEN` | Optional token for Hugging Face access (for gated/private assets). |
@@ -136,12 +135,11 @@ Some wheels (like PyTorch) are large and require compatible CUDA or CPU buildsâ€
 
 ### Speech-to-speech connection modes
 
-Use the deployed backend exactly as before:
+Use the built-in Hugging Face deployment:
 
 ```env
 BACKEND_PROVIDER=speech-to-speech
 S2S_REALTIME_CONNECTION_MODE=deployed
-S2S_REALTIME_SESSION_URL=https://v8si2gztnaqwjvf2.us-east-1.aws.endpoints.huggingface.cloud/session
 ```
 
 Run the speech-to-speech backend on the same machine as the conversation app:

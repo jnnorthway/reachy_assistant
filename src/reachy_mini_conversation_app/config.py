@@ -92,6 +92,7 @@ DEFAULT_BACKEND_PROVIDER = S2S_BACKEND
 S2S_REALTIME_CONNECTION_MODE_ENV = "S2S_REALTIME_CONNECTION_MODE"
 S2S_LOCAL_CONNECTION_MODE = "local"
 S2S_DEPLOYED_CONNECTION_MODE = "deployed"
+DEFAULT_S2S_REALTIME_SESSION_URL = "https://v8si2gztnaqwjvf2.us-east-1.aws.endpoints.huggingface.cloud/session"
 DEFAULT_MODEL_NAME_BY_BACKEND = {
     OPENAI_BACKEND: "gpt-realtime",
     GEMINI_BACKEND: "gemini-3.1-flash-live-preview",
@@ -262,7 +263,7 @@ class Config:
     )
     MODEL_NAME = _resolve_model_name(BACKEND_PROVIDER, os.getenv("MODEL_NAME"))
     S2S_REALTIME_CONNECTION_MODE = _normalize_s2s_connection_mode(os.getenv(S2S_REALTIME_CONNECTION_MODE_ENV))
-    S2S_REALTIME_SESSION_URL = os.getenv("S2S_REALTIME_SESSION_URL")
+    S2S_REALTIME_SESSION_URL = DEFAULT_S2S_REALTIME_SESSION_URL
     S2S_REALTIME_WS_URL = os.getenv("S2S_REALTIME_WS_URL")
     HF_HOME = os.getenv("HF_HOME", "./cache")
     LOCAL_VISION_MODEL = os.getenv("LOCAL_VISION_MODEL", "HuggingFaceTB/SmolVLM2-2.2B-Instruct")
@@ -362,7 +363,7 @@ def refresh_runtime_config_from_env() -> None:
     )
     config.MODEL_NAME = _resolve_model_name(config.BACKEND_PROVIDER, os.getenv("MODEL_NAME"))
     config.S2S_REALTIME_CONNECTION_MODE = _normalize_s2s_connection_mode(os.getenv(S2S_REALTIME_CONNECTION_MODE_ENV))
-    config.S2S_REALTIME_SESSION_URL = os.getenv("S2S_REALTIME_SESSION_URL")
+    config.S2S_REALTIME_SESSION_URL = DEFAULT_S2S_REALTIME_SESSION_URL
     config.S2S_REALTIME_WS_URL = os.getenv("S2S_REALTIME_WS_URL")
     config.REACHY_MINI_CUSTOM_PROFILE = LOCKED_PROFILE or os.getenv("REACHY_MINI_CUSTOM_PROFILE")
 
@@ -402,7 +403,7 @@ def get_default_voice_for_backend(backend: str | None = None) -> str:
 
 
 def get_s2s_session_url() -> str | None:
-    """Return the configured speech-to-speech session allocator URL, if any."""
+    """Return the built-in speech-to-speech session allocator URL, if any."""
     value = (getattr(config, "S2S_REALTIME_SESSION_URL", None) or "").strip()
     return value or None
 

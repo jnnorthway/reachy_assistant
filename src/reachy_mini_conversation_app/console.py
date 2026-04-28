@@ -206,7 +206,7 @@ class LocalStream:
         if backend == GEMINI_BACKEND:
             return "GEMINI_API_KEY"
         if backend == S2S_BACKEND:
-            return "S2S_REALTIME_SESSION_URL or S2S_REALTIME_WS_URL"
+            return "S2S_REALTIME_WS_URL"
         return "OPENAI_API_KEY"
 
     def _persist_env_value(self, env_name: str, value: str) -> None:
@@ -311,6 +311,7 @@ class LocalStream:
     def _persist_s2s_allocator_connection(self) -> None:
         """Persist the deployed speech-to-speech allocator mode."""
         self._persist_env_value(S2S_REALTIME_CONNECTION_MODE_ENV, S2S_DEPLOYED_CONNECTION_MODE)
+        self._remove_persisted_env_values(("S2S_REALTIME_SESSION_URL",))
 
     def _persist_api_key(self, key: str) -> None:
         """Persist OPENAI_API_KEY to environment and instance `.env`."""

@@ -280,7 +280,7 @@ def test_backend_config_persists_deployed_mode_without_clearing_local_s2s_ws_url
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Saving deployed mode should make env selection explicit without deleting the saved local URL."""
+    """Saving deployed mode should make env selection explicit and remove stale allocator URLs."""
     env_path = tmp_path / ".env"
     env_path.write_text(
         "BACKEND_PROVIDER=speech-to-speech\n"
@@ -323,7 +323,7 @@ def test_backend_config_persists_deployed_mode_without_clearing_local_s2s_ws_url
 
     env_text = env_path.read_text(encoding="utf-8")
     assert "S2S_REALTIME_CONNECTION_MODE=deployed" in env_text
-    assert "S2S_REALTIME_SESSION_URL=https://lb.example.test/session" in env_text
+    assert "S2S_REALTIME_SESSION_URL=" not in env_text
     assert "S2S_REALTIME_WS_URL=ws://localhost:8765/v1/realtime" in env_text
 
 
