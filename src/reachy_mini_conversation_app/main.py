@@ -56,6 +56,7 @@ def run(
         get_backend_label,
         get_s2s_connection_mode,
         refresh_runtime_config_from_env,
+        get_s2s_selected_connection_mode,
     )
     from reachy_mini_conversation_app.startup_settings import (
         StartupSettings,
@@ -85,9 +86,10 @@ def run(
 
     if config.BACKEND_PROVIDER == S2S_BACKEND:
         logger.info(
-            "Configured backend provider: %s (%s)",
+            "Configured backend provider: %s (%s), connection mode: %s",
             config.BACKEND_PROVIDER,
             get_backend_label(config.BACKEND_PROVIDER),
+            get_s2s_selected_connection_mode(),
         )
     else:
         logger.info(
