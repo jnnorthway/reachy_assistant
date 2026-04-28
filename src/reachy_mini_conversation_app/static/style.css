@@ -274,7 +274,7 @@ body {
   border-color: rgba(76, 224, 179, 0.4);
 }
 
-.hidden { display: none; }
+.hidden { display: none !important; }
 label {
   display: block;
   margin: 8px 0 6px;
@@ -360,6 +360,10 @@ button.ghost:hover { border-color: rgba(94, 240, 193, 0.4); }
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin-top: 10px;
+}
+.s2s-local-note {
+  grid-column: 1 / -1;
+  margin: 0;
 }
 .s2s-field {
   min-width: 0;

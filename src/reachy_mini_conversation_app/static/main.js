@@ -40,9 +40,9 @@ const BACKEND_META = {
     changeButton: "Edit connection",
     readyTitle: "Speech-to-speech ready",
     readyCopy: "Speech-to-speech is configured. You can jump straight to personalities.",
-    formCopy: "Choose whether Reachy should use the deployed speech-to-speech backend or connect directly to a local or LAN websocket endpoint.",
+    formCopy: "Choose whether Reachy should use the Hugging Face deployment or connect to your own local speech-to-speech instance.",
     requiredCredentialsCopy: "Set up the speech-to-speech connection details before switching.",
-    note: "Speech-to-speech can use a deployed session allocator or a direct realtime websocket on localhost or your LAN.",
+    note: "Speech-to-speech can use the Hugging Face deployment or your own local realtime websocket.",
   },
 };
 
@@ -285,9 +285,9 @@ function describeS2SConfiguration(status) {
     return `Speech-to-speech will connect directly to ${host}:${port}.`;
   }
   if (status.has_s2s_session_url) {
-    return "Speech-to-speech will use the deployed session allocator saved in the app environment.";
+    return "Speech-to-speech will use the Hugging Face deployment saved in the app environment.";
   }
-  return "Choose a deployed allocator or a local/LAN websocket endpoint.";
+  return "Choose the Hugging Face deployment or a local realtime endpoint.";
 }
 
 function isLocalS2SHost(host) {
@@ -358,11 +358,11 @@ async function init() {
     show(s2sDirectFields, localMode);
     show(s2sHostCustomWrap, localMode && customHost);
     s2sModeCopy.textContent = localMode
-      ? "Use localhost when the speech-to-speech server runs on the same machine, or switch to a custom LAN IP or hostname."
-      : "Use the deployed session allocator already saved as S2S_REALTIME_SESSION_URL.";
+      ? "Use localhost for a speech-to-speech server on the same machine, or switch to a custom LAN IP or hostname."
+      : "Use the Hugging Face deployment saved as S2S_REALTIME_SESSION_URL.";
 
     if (!localMode) {
-      setStatusMessage(s2sPreview, "Speech-to-speech will use the configured deployed allocator.");
+      setStatusMessage(s2sPreview, "Speech-to-speech will use the configured Hugging Face deployment.");
       return;
     }
 
@@ -578,7 +578,7 @@ async function init() {
         if (e.message === "missing_s2s_session_url") {
           setStatusMessage(
             statusEl,
-            "No deployed session allocator is saved yet. Add S2S_REALTIME_SESSION_URL in the app environment first.",
+            "No Hugging Face deployment URL is saved yet. Add S2S_REALTIME_SESSION_URL in the app environment first.",
             "error",
           );
         } else if (e.message === "empty_s2s_host" || e.message === "invalid_s2s_host") {
