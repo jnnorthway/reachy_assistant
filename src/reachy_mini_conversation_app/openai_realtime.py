@@ -846,8 +846,6 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                                 },
                             ),
                         )
-                        logger.info(f"{tool_name} is_idle_tool_call: {self.is_idle_tool_call}")
-
                         logger.info(
                             "Started background tool: %s (id=%s, call_id=%s)", tool_name, bg_tool.tool_id, call_id
                         )

@@ -283,21 +283,6 @@ class LocalStream:
         except Exception as e:
             logger.warning("Failed to remove %s: %s", ", ".join(normalized_names), e)
 
-    def _clear_env_values(self, env_names: tuple[str, ...]) -> None:
-        """Clear environment values both in-memory and in the instance `.env`."""
-        normalized_names = tuple(sorted({name.strip() for name in env_names if name and name.strip()}))
-        if not normalized_names:
-            return
-
-        for env_name in normalized_names:
-            try:
-                os.environ.pop(env_name, None)
-            except Exception:
-                pass
-
-        self._remove_persisted_env_values(normalized_names)
-        refresh_runtime_config_from_env()
-
     def _persist_s2s_direct_connection(self, host: str, port: int) -> None:
         """Persist a direct speech-to-speech websocket target."""
         self._persist_env_values(

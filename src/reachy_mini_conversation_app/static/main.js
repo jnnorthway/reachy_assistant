@@ -317,7 +317,6 @@ async function init() {
   const input = document.getElementById("api-key");
   const s2sFields = document.getElementById("s2s-fields");
   const s2sMode = document.getElementById("s2s-mode");
-  const s2sModeCopy = document.getElementById("s2s-mode-copy");
   const s2sDirectFields = document.getElementById("s2s-direct-fields");
   const s2sHostPreset = document.getElementById("s2s-host-preset");
   const s2sHostCustomWrap = document.getElementById("s2s-host-custom-wrap");
@@ -356,8 +355,6 @@ async function init() {
     const customHost = s2sHostPreset.value === "custom";
     show(s2sDirectFields, localMode);
     show(s2sHostCustomWrap, localMode && customHost);
-    show(s2sModeCopy, false);
-    s2sModeCopy.textContent = "";
 
     if (!localMode) {
       setStatusMessage(s2sPreview, "Speech-to-speech will use the Hugging Face server.");

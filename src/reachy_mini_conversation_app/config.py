@@ -56,7 +56,6 @@ AVAILABLE_VOICES: list[str] = [
     "shimmer",
     "verse",
 ]
-OPENAI_AVAILABLE_VOICES = AVAILABLE_VOICES
 OPENAI_DEFAULT_VOICE = "cedar"
 
 # Qwen3-TTS CustomVoice speaker catalog from the deployed speech-to-speech backend.
