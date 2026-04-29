@@ -100,9 +100,7 @@ class BaseRealtimeHandler(AsyncStreamHandler, ABC):
         super().__init_subclass__(**kwargs)
         missing = [name for name in cls._REQUIRED_PROVIDER_CONFIG if name not in cls.__dict__]
         if missing:
-            raise TypeError(
-                f"{cls.__name__} must define provider config class variable(s): {', '.join(missing)}"
-            )
+            raise TypeError(f"{cls.__name__} must define provider config class variable(s): {', '.join(missing)}")
 
     def __init__(
         self,
