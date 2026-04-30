@@ -67,7 +67,7 @@ def _normalize_startup_voice(voice: str | None) -> str | None:
 
 
 class BaseRealtimeHandler(ConversationHandler, ABC):
-    """Shared OpenAI-compatible realtime stream handler."""
+    """Shared realtime stream handler for OpenAI-compatible client APIs."""
 
     BACKEND_PROVIDER: ClassVar[str]
     SAMPLE_RATE: ClassVar[int]
@@ -322,7 +322,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         item_id: str,
         delta: str,
     ) -> None:
-        """Record an OpenAI-style suffix delta for a partial transcript."""
+        """Record a suffix delta for a partial transcript."""
         if input_transcript.item_id != item_id:
             input_transcript.item_id = item_id
             input_transcript.deltas = [delta]
@@ -398,7 +398,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
 
             # Ensure we have a client (start_up must have run once)
             if getattr(self, "client", None) is None:
-                logger.warning("Cannot restart: OpenAI client not initialized yet.")
+                logger.warning("Cannot restart: realtime client not initialized yet.")
                 return
 
             # Fire-and-forget new session and wait briefly for connection
@@ -408,7 +408,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                 pass
             if self.REFRESH_CLIENT_ON_RECONNECT:
                 self.client = await self._build_realtime_client()
-            asyncio.create_task(self._run_realtime_session(), name="openai-realtime-restart")
+            asyncio.create_task(self._run_realtime_session(), name="realtime-session-restart")
             try:
                 await asyncio.wait_for(self._connected_event.wait(), timeout=5.0)
                 logger.info("Realtime session restarted and connected.")
@@ -532,7 +532,6 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
 
         try:
             self._mark_activity("tool_result_ready")
-            # TODO: refactor this since it's repeated here, in the camera branch below, and in send_idle_signal
             if isinstance(bg_tool.id, str):
                 await self.connection.conversation.item.create(
                     item={
@@ -654,7 +653,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
             # Reset the partial-transcript accumulator for each new session
             self.input_transcript_chunks_by_item = InputTranscriptChunksByItem()
 
-            # Manage event received from the openai server
+            # Manage events received from the realtime server.
             self.connection = conn
             try:
                 self._connected_event.set()
@@ -670,7 +669,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                 response_sender_task = asyncio.create_task(self._response_sender_loop(), name="response-sender")
 
                 async for event in self.connection:
-                    logger.debug(f"OpenAI event: {event.type}")
+                    logger.debug("Realtime event: %s", event.type)
                     if event.type == "input_audio_buffer.speech_started":
                         self._mark_activity("user_speech_started")
                         self._turn_user_done_at = None
@@ -867,15 +866,15 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                     except asyncio.CancelledError:
                         pass
 
-                # Stop background tool manager tasks (listener + cleanup) in all patus.
+                # Stop background tool manager tasks (listener + cleanup) in all paths.
                 await self.tool_manager.shutdown()
 
     # Microphone receive
     async def receive(self, frame: Tuple[int, NDArray[np.int16]]) -> None:
-        """Receive audio frame from the microphone and send it to the OpenAI server.
+        """Receive audio frame from the microphone and send it to the realtime server.
 
         Handles both mono and stereo audio formats, converting to the expected
-        mono format for OpenAI's API. Resamples if the input sample rate differs
+        mono format for the realtime API. Resamples if the input sample rate differs
         from the expected rate.
 
         Args:
@@ -903,7 +902,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         # Cast if needed
         audio_frame = audio_to_int16(audio_frame)
 
-        # Send to OpenAI (guard against races during reconnect)
+        # Send to the realtime input buffer (guard against races during reconnect).
         try:
             audio_message = base64.b64encode(audio_frame.tobytes()).decode("utf-8")
             await self.connection.input_audio_buffer.append(audio=audio_message)
@@ -913,7 +912,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
 
     async def emit(self) -> Tuple[int, NDArray[np.int16]] | AdditionalOutputs | None:
         """Emit audio frame to be played by the speaker."""
-        # sends to the stream the stuff put in the output queue by the openai event handler
+        # Sends output queued by the realtime event handler to the stream.
         # This is called periodically by the fastrtc Stream
 
         # Handle idle
@@ -978,7 +977,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         """Build the realtime SDK client for this backend."""
 
     async def send_idle_signal(self, idle_duration: float) -> None:
-        """Send an idle signal to the openai server."""
+        """Send an idle signal to the realtime server."""
         logger.debug("Sending idle signal")
         self.is_idle_tool_call = True
         timestamp_msg = f"[Idle time update: {self.format_timestamp()} - No activity for {idle_duration:.1f}s] You've been idle for a while. Feel free to get creative - dance, show an emotion, look around, do nothing, or just be yourself!"
