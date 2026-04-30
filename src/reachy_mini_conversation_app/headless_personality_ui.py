@@ -9,7 +9,7 @@ callable to avoid cross-thread issues.
 from __future__ import annotations
 import asyncio
 import logging
-from typing import Any, Callable, Optional, Protocol
+from typing import Any, Callable, Optional
 
 from fastapi import Query, FastAPI, Request
 
@@ -19,6 +19,7 @@ from .config import (
     get_default_voice_for_backend,
     get_available_voices_for_backend,
 )
+from .conversation_handler import ConversationHandler
 from .headless_personality import (
     DEFAULT_OPTION,
     _sanitize_name,
@@ -34,29 +35,9 @@ from .headless_personality import (
 logger = logging.getLogger(__name__)
 
 
-class PersonalityHandler(Protocol):
-    """Handler surface used by the headless personality routes."""
-
-    async def apply_personality(self, profile: str | None) -> str:
-        """Apply a personality profile."""
-        ...
-
-    async def get_available_voices(self) -> list[str]:
-        """Return voices available for the active backend."""
-        ...
-
-    def get_current_voice(self) -> str:
-        """Return the current voice."""
-        ...
-
-    async def change_voice(self, voice: str) -> str:
-        """Change the current voice."""
-        ...
-
-
 def mount_personality_routes(
     app: FastAPI,
-    handler: PersonalityHandler,
+    handler: ConversationHandler,
     get_loop: Callable[[], asyncio.AbstractEventLoop | None],
     *,
     persist_personality: Callable[[Optional[str], Optional[str]], None] | None = None,

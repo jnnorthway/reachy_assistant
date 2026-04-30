@@ -15,7 +15,7 @@ import sys
 import time
 import asyncio
 import logging
-from typing import Any, List, Callable, Optional, Protocol
+from typing import List, Optional
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -43,6 +43,7 @@ from reachy_mini_conversation_app.config import (
     refresh_runtime_config_from_env,
 )
 from reachy_mini_conversation_app.startup_settings import read_startup_settings, write_startup_settings
+from reachy_mini_conversation_app.conversation_handler import ConversationHandler
 from reachy_mini_conversation_app.headless_personality_ui import mount_personality_routes
 
 
@@ -72,46 +73,6 @@ LEGACY_STARTUP_ENV_NAMES = (
     "REACHY_MINI_CUSTOM_PROFILE",
     "REACHY_MINI_VOICE_OVERRIDE",
 )
-
-
-class LocalStreamHandler(Protocol):
-    """Protocol for the handler surface used by LocalStream."""
-
-    deps: Any
-    output_queue: asyncio.Queue[Any]
-    _clear_queue: Callable[[], None] | None
-
-    async def start_up(self) -> None:
-        """Start the realtime handler."""
-        ...
-
-    async def shutdown(self) -> None:
-        """Shut down the realtime handler."""
-        ...
-
-    async def receive(self, frame: Any) -> None:
-        """Receive an input frame."""
-        ...
-
-    async def emit(self) -> Any:
-        """Emit the next output item."""
-        ...
-
-    async def apply_personality(self, profile: str | None) -> str:
-        """Apply a personality profile."""
-        ...
-
-    async def get_available_voices(self) -> list[str]:
-        """Return voices available for the active backend."""
-        ...
-
-    def get_current_voice(self) -> str:
-        """Return the current voice."""
-        ...
-
-    async def change_voice(self, voice: str) -> str:
-        """Change the current voice."""
-        ...
 
 
 def _estimate_pending_playback_seconds(robot: ReachyMini) -> float:
@@ -157,7 +118,7 @@ class LocalStream:
 
     def __init__(
         self,
-        handler: LocalStreamHandler,
+        handler: ConversationHandler,
         robot: ReachyMini,
         *,
         settings_app: Optional[FastAPI] = None,

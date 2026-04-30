@@ -13,7 +13,7 @@ from datetime import datetime
 import numpy as np
 import gradio as gr
 from openai import AsyncOpenAI
-from fastrtc import AdditionalOutputs, AsyncStreamHandler, wait_for_item, audio_to_int16
+from fastrtc import AdditionalOutputs, wait_for_item, audio_to_int16
 from pydantic import Field, BaseModel
 from numpy.typing import NDArray
 from scipy.signal import resample
@@ -32,6 +32,7 @@ from reachy_mini_conversation_app.config import (
     get_available_voices_for_backend,
 )
 from reachy_mini_conversation_app.tools.core_tools import ToolDependencies
+from reachy_mini_conversation_app.conversation_handler import ConversationHandler
 from reachy_mini_conversation_app.tools.background_tool_manager import (
     ToolCallRoutine,
     ToolNotification,
@@ -66,7 +67,7 @@ def _normalize_startup_voice(voice: str | None) -> str | None:
     return None
 
 
-class BaseRealtimeHandler(AsyncStreamHandler, ABC):
+class BaseRealtimeHandler(ConversationHandler, ABC):
     """Shared OpenAI-compatible realtime stream handler."""
 
     BACKEND_PROVIDER: ClassVar[str]
