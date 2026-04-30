@@ -18,17 +18,13 @@ from pydantic import Field, BaseModel
 from numpy.typing import NDArray
 from scipy.signal import resample
 from openai.types.realtime import (
-    AudioTranscriptionParam,
     RealtimeAudioConfigParam,
-    RealtimeAudioConfigInputParam,
     RealtimeAudioConfigOutputParam,
     RealtimeResponseCreateParamsParam,
     RealtimeSessionCreateRequestParam,
 )
 from websockets.exceptions import ConnectionClosedError
 from openai.resources.realtime.realtime import AsyncRealtimeConnection
-from openai.types.realtime.realtime_audio_formats_param import AudioPCM
-from openai.types.realtime.realtime_audio_input_turn_detection_param import ServerVad
 
 from reachy_mini_conversation_app.config import (
     config,
@@ -196,10 +192,6 @@ class BaseRealtimeHandler(AsyncStreamHandler, ABC):
         return (ConnectionClosedError,)
 
     @abstractmethod
-    def _get_openai_compatible_session_audio_rates(self) -> tuple[Literal[24000] | None, Literal[24000] | None]:
-        """Return ``(input_rate, output_rate)`` for the OpenAI-compatible session payload."""
-
-    @abstractmethod
     def _get_session_instructions(self) -> str:
         """Return session instructions for this backend."""
 
@@ -210,6 +202,10 @@ class BaseRealtimeHandler(AsyncStreamHandler, ABC):
     @abstractmethod
     def _get_active_tool_specs(self) -> list[dict[str, Any]]:
         """Return active tool specs for the current session dependencies."""
+
+    @abstractmethod
+    def _get_session_config(self, tool_specs: list[dict[str, Any]]) -> RealtimeSessionCreateRequestParam:
+        """Return the backend-specific realtime session config."""
 
     async def _wait_for_output_item(self) -> Tuple[int, NDArray[np.int16]] | AdditionalOutputs | None:
         """Wait for the next output item."""
@@ -634,7 +630,6 @@ class BaseRealtimeHandler(AsyncStreamHandler, ABC):
 
     async def _run_realtime_session(self) -> None:
         """Establish and manage a single realtime session."""
-        input_rate, output_rate = self._get_openai_compatible_session_audio_rates()
         tool_specs = self._get_active_tool_specs()
         logger.info(
             "Tools to be used in conversation: %s",
@@ -647,23 +642,7 @@ class BaseRealtimeHandler(AsyncStreamHandler, ABC):
             connect_kwargs["extra_query"] = self._realtime_connect_query
         async with self.client.realtime.connect(**connect_kwargs) as conn:
             try:
-                session_config = RealtimeSessionCreateRequestParam(
-                    type="realtime",
-                    instructions=self._get_session_instructions(),
-                    audio=RealtimeAudioConfigParam(
-                        input=RealtimeAudioConfigInputParam(
-                            format=AudioPCM(type="audio/pcm", rate=input_rate),  # type: ignore[typeddict-item]
-                            transcription=AudioTranscriptionParam(model="gpt-4o-transcribe", language="en"),
-                            turn_detection=ServerVad(type="server_vad", interrupt_response=True),
-                        ),
-                        output=RealtimeAudioConfigOutputParam(
-                            format=AudioPCM(type="audio/pcm", rate=output_rate),  # type: ignore[typeddict-item]
-                            voice=self.get_current_voice(),
-                        ),
-                    ),
-                    tools=tool_specs,  # type: ignore[typeddict-item]
-                    tool_choice="auto",
-                )
+                session_config = self._get_session_config(tool_specs)
                 await conn.session.update(session=session_config)
                 logger.info(
                     "Realtime session initialized with profile=%r voice=%r",

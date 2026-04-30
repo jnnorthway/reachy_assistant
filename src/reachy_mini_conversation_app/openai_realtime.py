@@ -1,10 +1,19 @@
 import logging
-from typing import Any, Literal
+from typing import Any, cast
 
 from openai import AsyncOpenAI
 from fastrtc import AdditionalOutputs, wait_for_item
 from numpy.typing import NDArray
+from openai.types.realtime import (
+    AudioTranscriptionParam,
+    RealtimeAudioConfigParam,
+    RealtimeAudioConfigInputParam,
+    RealtimeAudioConfigOutputParam,
+    RealtimeSessionCreateRequestParam,
+)
 from websockets.exceptions import ConnectionClosedError
+from openai.types.realtime.realtime_audio_formats_param import AudioPCM
+from openai.types.realtime.realtime_audio_input_turn_detection_param import ServerVad
 
 from reachy_mini_conversation_app.config import OPENAI_BACKEND, config, get_default_voice_for_backend
 from reachy_mini_conversation_app.prompts import get_session_voice, get_session_instructions
@@ -42,10 +51,6 @@ class OpenaiRealtimeHandler(BaseRealtimeHandler):
         """Return websocket closure exceptions handled as reconnectable/ignorable."""
         return (ConnectionClosedError,)
 
-    def _get_openai_compatible_session_audio_rates(self) -> tuple[Literal[24000], Literal[24000]]:
-        """OpenAI Realtime requires an explicit 24 kHz audio session config."""
-        return 24000, 24000
-
     def _get_session_instructions(self) -> str:
         """Return OpenAI session instructions."""
         return get_session_instructions()
@@ -57,6 +62,26 @@ class OpenaiRealtimeHandler(BaseRealtimeHandler):
     def _get_active_tool_specs(self) -> list[dict[str, Any]]:
         """Return active tool specs for the current session dependencies."""
         return get_active_tool_specs(self.deps)
+
+    def _get_session_config(self, tool_specs: list[dict[str, Any]]) -> RealtimeSessionCreateRequestParam:
+        """Return the OpenAI Realtime session config."""
+        return RealtimeSessionCreateRequestParam(
+            type="realtime",
+            instructions=self._get_session_instructions(),
+            audio=RealtimeAudioConfigParam(
+                input=RealtimeAudioConfigInputParam(
+                    format=AudioPCM(type="audio/pcm", rate=24000),
+                    transcription=AudioTranscriptionParam(model="gpt-4o-transcribe", language="en"),
+                    turn_detection=ServerVad(type="server_vad", interrupt_response=True),
+                ),
+                output=RealtimeAudioConfigOutputParam(
+                    format=AudioPCM(type="audio/pcm", rate=24000),
+                    voice=self.get_current_voice(),
+                ),
+            ),
+            tools=cast(Any, tool_specs),
+            tool_choice="auto",
+        )
 
     async def _wait_for_output_item(self) -> tuple[int, NDArray[Any]] | AdditionalOutputs | None:
         """Wait for the next output item."""

@@ -1,12 +1,21 @@
 import logging
-from typing import Any, Literal
+from typing import Any, cast
 from urllib.parse import urlsplit, parse_qsl, urlunsplit
 
 import httpx
 from openai import AsyncOpenAI
 from fastrtc import AdditionalOutputs, wait_for_item
 from numpy.typing import NDArray
+from openai.types.realtime import (
+    AudioTranscriptionParam,
+    RealtimeAudioConfigParam,
+    RealtimeAudioConfigInputParam,
+    RealtimeAudioConfigOutputParam,
+    RealtimeSessionCreateRequestParam,
+)
 from websockets.exceptions import ConnectionClosedError
+from openai.types.realtime.realtime_audio_formats_param import AudioPCM
+from openai.types.realtime.realtime_audio_input_turn_detection_param import ServerVad
 
 from reachy_mini_conversation_app.config import (
     HF_BACKEND,
@@ -59,6 +68,13 @@ def _build_openai_compatible_client_from_realtime_url(
     return client, connect_query
 
 
+def _native_rate_audio_pcm() -> AudioPCM:
+    """Return the Hugging Face native-rate PCM config for the OpenAI SDK payload."""
+    # The OpenAI SDK type is centered on OpenAI's 24 kHz realtime audio. The
+    # Hugging Face compatible server uses rate=None as its native 16 kHz mode.
+    return cast(AudioPCM, {"type": "audio/pcm", "rate": None})
+
+
 class HuggingFaceRealtimeHandler(BaseRealtimeHandler):
     """Realtime handler for Hugging Face endpoints."""
 
@@ -80,31 +96,6 @@ class HuggingFaceRealtimeHandler(BaseRealtimeHandler):
         """Return websocket closure exceptions handled as reconnectable/ignorable."""
         return (ConnectionClosedError,)
 
-    def _get_openai_compatible_session_audio_rates(self) -> tuple[Literal[24000] | None, Literal[24000] | None]:
-        """Return Hugging Face audio rates for the OpenAI-compatible session payload.
-
-        The OpenAI SDK type accepts only 24 kHz or None. The Hugging Face
-        backend interprets None as its native 16 kHz default.
-        """
-        input_rate: Literal[24000] | None
-        output_rate: Literal[24000] | None
-
-        if self.input_sample_rate == self.SAMPLE_RATE:
-            input_rate = None
-        elif self.input_sample_rate == 24000:
-            input_rate = 24000
-        else:
-            raise AssertionError(f"Unsupported Hugging Face input sample rate: {self.input_sample_rate}")
-
-        if self.output_sample_rate == self.SAMPLE_RATE:
-            output_rate = None
-        elif self.output_sample_rate == 24000:
-            output_rate = 24000
-        else:
-            raise AssertionError(f"Unsupported Hugging Face output sample rate: {self.output_sample_rate}")
-
-        return input_rate, output_rate
-
     def _get_session_instructions(self) -> str:
         """Return Hugging Face session instructions."""
         return get_session_instructions()
@@ -116,6 +107,26 @@ class HuggingFaceRealtimeHandler(BaseRealtimeHandler):
     def _get_active_tool_specs(self) -> list[dict[str, Any]]:
         """Return active tool specs for the current session dependencies."""
         return get_active_tool_specs(self.deps)
+
+    def _get_session_config(self, tool_specs: list[dict[str, Any]]) -> RealtimeSessionCreateRequestParam:
+        """Return the Hugging Face OpenAI-compatible session config."""
+        return RealtimeSessionCreateRequestParam(
+            type="realtime",
+            instructions=self._get_session_instructions(),
+            audio=RealtimeAudioConfigParam(
+                input=RealtimeAudioConfigInputParam(
+                    format=_native_rate_audio_pcm(),
+                    transcription=AudioTranscriptionParam(model="gpt-4o-transcribe", language="en"),
+                    turn_detection=ServerVad(type="server_vad", interrupt_response=True),
+                ),
+                output=RealtimeAudioConfigOutputParam(
+                    format=_native_rate_audio_pcm(),
+                    voice=self.get_current_voice(),
+                ),
+            ),
+            tools=cast(Any, tool_specs),
+            tool_choice="auto",
+        )
 
     async def _wait_for_output_item(self) -> tuple[int, NDArray[Any]] | AdditionalOutputs | None:
         """Wait for the next output item."""
