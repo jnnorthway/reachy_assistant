@@ -58,6 +58,12 @@ class _VisionProcessor(Protocol):
     def batch_decode(self, sequences: object, *, skip_special_tokens: bool) -> list[str]: ...
 
 
+class _VisionProcessorFactory(Protocol):
+    """Factory interface for the untyped Transformers AutoProcessor boundary."""
+
+    def from_pretrained(self, pretrained_model_name_or_path: str) -> object: ...
+
+
 class _VisionModel(Protocol):
     """Small interface required from the Hugging Face image-text model."""
 
@@ -107,7 +113,8 @@ class VisionProcessor:
     def initialize(self) -> None:
         """Load model and processor onto the selected device."""
         logger.info("Loading SmolVLM2 model on %s (HF_HOME=%s)", self.device, config.HF_HOME)
-        processor = cast(_VisionProcessor, AutoProcessor.from_pretrained(self.vision_config.model_path))
+        processor_factory = cast(_VisionProcessorFactory, AutoProcessor)
+        processor = cast(_VisionProcessor, processor_factory.from_pretrained(self.vision_config.model_path))
 
         model_kwargs: dict[str, object] = {
             "dtype": torch.bfloat16 if self.device == "cuda" else torch.float32,
