@@ -472,10 +472,6 @@ def is_gemini_model() -> bool:
     return get_backend_choice() == GEMINI_BACKEND
 
 
-# Generic default voice for UI and tests.
-DEFAULT_VOICE = get_default_voice_for_backend()
-
-
 def set_custom_profile(profile: str | None) -> None:
     """Update the selected custom profile at runtime and expose it via env.
 
