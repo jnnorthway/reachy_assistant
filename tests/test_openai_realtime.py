@@ -28,6 +28,87 @@ def _build_handler(loop: asyncio.AbstractEventLoop) -> OpenaiRealtimeHandler:
     return OpenaiRealtimeHandler(deps)
 
 
+async def _run_openai_handler_with_events(
+    monkeypatch: Any,
+    events: list[Any],
+    *,
+    movement_manager: MagicMock | None = None,
+) -> OpenaiRealtimeHandler:
+    """Run an OpenAI realtime handler against a fixed event sequence."""
+    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda: "test")
+    monkeypatch.setattr(rt_mod, "get_session_voice", lambda default=OPENAI_DEFAULT_VOICE: "alloy")
+    monkeypatch.setattr(rt_mod, "get_active_tool_specs", lambda _: [])
+
+    class FakeSession:
+        async def update(self, **_kw: Any) -> None:
+            pass
+
+    class FakeInputAudioBuffer:
+        async def append(self, **_kw: Any) -> None:
+            pass
+
+    class FakeItem:
+        async def create(self, **_kw: Any) -> None:
+            pass
+
+    class FakeConversation:
+        item = FakeItem()
+
+    class FakeResponse:
+        async def create(self, **_kw: Any) -> None:
+            pass
+
+        async def cancel(self, **_kw: Any) -> None:
+            pass
+
+    class FakeConn:
+        session = FakeSession()
+        input_audio_buffer = FakeInputAudioBuffer()
+        conversation = FakeConversation()
+        response = FakeResponse()
+
+        def __init__(self) -> None:
+            self._events = iter(events)
+
+        async def __aenter__(self) -> "FakeConn":
+            return self
+
+        async def __aexit__(self, *_args: Any) -> bool:
+            return False
+
+        async def close(self) -> None:
+            pass
+
+        def __aiter__(self) -> "FakeConn":
+            return self
+
+        async def __anext__(self) -> Any:
+            try:
+                return next(self._events)
+            except StopIteration:
+                raise StopAsyncIteration
+
+    class FakeRealtime:
+        def connect(self, **_kw: Any) -> FakeConn:
+            return FakeConn()
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.realtime = FakeRealtime()
+
+    deps = ToolDependencies(reachy_mini=MagicMock(), movement_manager=movement_manager or MagicMock())
+    handler = OpenaiRealtimeHandler(deps)
+    handler.client = FakeClient()
+
+    start_up = MagicMock()
+    shutdown = AsyncMock()
+    monkeypatch.setattr(type(handler.tool_manager), "start_up", start_up)
+    monkeypatch.setattr(type(handler.tool_manager), "shutdown", shutdown)
+
+    await handler._run_realtime_session()
+    return handler
+
+
 @pytest.mark.asyncio
 async def test_tool_completion_does_not_reset_head_wobbler(monkeypatch: Any) -> None:
     """Tool completion should not interrupt ongoing speech wobble."""
@@ -324,6 +405,46 @@ async def test_user_speech_events_reset_idle_timer(monkeypatch: Any) -> None:
 
     assert handler.last_activity_time > previous_activity_time
     movement_manager.set_listening.assert_any_call(True)
+
+
+@pytest.mark.asyncio
+async def test_empty_user_transcript_exits_listening_without_chat_message(monkeypatch: Any) -> None:
+    """Blank VAD commits should not leave listening motion frozen."""
+    movement_manager = MagicMock()
+
+    handler = await _run_openai_handler_with_events(
+        monkeypatch,
+        [
+            SimpleNamespace(type="input_audio_buffer.speech_started"),
+            SimpleNamespace(type="conversation.item.input_audio_transcription.completed", transcript="   "),
+        ],
+        movement_manager=movement_manager,
+    )
+
+    assert [call.args[0] for call in movement_manager.set_listening.call_args_list] == [True, False]
+    assert handler.output_queue.empty()
+    assert handler._turn_user_done_at is None
+
+
+@pytest.mark.asyncio
+async def test_empty_audio_buffer_error_exits_listening_without_chat_error(monkeypatch: Any) -> None:
+    """Empty audio-buffer commits are internal and should restore listening state."""
+    movement_manager = MagicMock()
+
+    handler = await _run_openai_handler_with_events(
+        monkeypatch,
+        [
+            SimpleNamespace(type="input_audio_buffer.speech_started"),
+            SimpleNamespace(
+                type="error",
+                error=SimpleNamespace(code="input_audio_buffer_commit_empty", message="empty audio buffer"),
+            ),
+        ],
+        movement_manager=movement_manager,
+    )
+
+    assert [call.args[0] for call in movement_manager.set_listening.call_args_list] == [True, False]
+    assert handler.output_queue.empty()
 
 
 @pytest.mark.asyncio

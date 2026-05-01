@@ -754,10 +754,10 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                     # Handle completed transcription (user finished speaking)
                     if event.type == "conversation.item.input_audio_transcription.completed":
                         self._mark_activity("user_transcription_completed")
-                        logger.debug(f"User transcript: {event.transcript}")
-                        self._turn_user_done_at = time.perf_counter()
-                        self._turn_response_created_at = None
-                        self._turn_first_audio_at = None
+                        raw_transcript = event.transcript or ""
+                        transcript = raw_transcript.strip()
+                        logger.debug("User transcript: %s", raw_transcript)
+                        self.deps.movement_manager.set_listening(False)
 
                         # Cancel any pending partial emission
                         if self.partial_transcript_task and not self.partial_transcript_task.done():
@@ -767,7 +767,15 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                             except asyncio.CancelledError:
                                 pass
 
-                        await self.output_queue.put(AdditionalOutputs({"role": "user", "content": event.transcript}))
+                        if not transcript:
+                            logger.debug("Ignoring empty user transcript")
+                            continue
+
+                        self._turn_user_done_at = time.perf_counter()
+                        self._turn_response_created_at = None
+                        self._turn_first_audio_at = None
+
+                        await self.output_queue.put(AdditionalOutputs({"role": "user", "content": transcript}))
 
                     # Handle assistant transcription
                     if event.type == "response.output_audio_transcript.done":
@@ -858,6 +866,9 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                         else:
                             self._response_started_or_rejected_event.set()
                             logger.error("Realtime error [%s]: %s (raw=%s)", code, msg, err)
+
+                        if code == "input_audio_buffer_commit_empty":
+                            self.deps.movement_manager.set_listening(False)
 
                         # Only show user-facing errors, not internal state errors.
                         if code not in ("input_audio_buffer_commit_empty", "conversation_already_has_active_response"):
