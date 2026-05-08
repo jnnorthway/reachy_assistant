@@ -94,6 +94,7 @@ REALTIME_TRANSCRIPTION_LANGUAGE_ENV = "REALTIME_TRANSCRIPTION_LANGUAGE"
 MEMORY_ENABLED_ENV = "REACHY_MINI_MEMORY_ENABLED"
 CAMERA_ENABLED_ENV = "REACHY_MINI_CAMERA_ENABLED"
 INSTANCE_PATH_ENV = "REACHY_MINI_INSTANCE_PATH"
+REACHY_MINI_VOICE_ENV = "REACHY_MINI_VOICE"
 HF_LOCAL_CONNECTION_MODE = "local"
 HF_DEPLOYED_CONNECTION_MODE = "deployed"
 HF_REALTIME_SESSION_PROXY_URL = "https://pollen-robotics-reachy-mini-realtime-url.hf.space/session"
@@ -370,6 +371,7 @@ class Config:
     TOOLS_DIRECTORY = Path(_tools_directory_env) if _tools_directory_env else None
     AUTOLOAD_EXTERNAL_TOOLS = _env_flag("AUTOLOAD_EXTERNAL_TOOLS", default=False)
     REACHY_MINI_CUSTOM_PROFILE = LOCKED_PROFILE or os.getenv("REACHY_MINI_CUSTOM_PROFILE")
+    REACHY_MINI_VOICE = os.getenv(REACHY_MINI_VOICE_ENV)
 
     logger.debug(f"Custom Profile: {REACHY_MINI_CUSTOM_PROFILE}")
 
@@ -467,6 +469,7 @@ def refresh_runtime_config_from_env() -> None:
     )
     config.HF_TOKEN = os.getenv("HF_TOKEN")
     config.REACHY_MINI_CUSTOM_PROFILE = LOCKED_PROFILE or os.getenv("REACHY_MINI_CUSTOM_PROFILE")
+    config.REACHY_MINI_VOICE = os.getenv(REACHY_MINI_VOICE_ENV)
     config.MEMORY_ENABLED = _env_flag(MEMORY_ENABLED_ENV, default=True)
     config.CAMERA_ENABLED = _env_flag(CAMERA_ENABLED_ENV, default=True)
     config.LOCAL_VAD_ENABLED = _env_flag("LOCAL_VAD_ENABLED", default=True)
@@ -539,6 +542,15 @@ def get_available_voices() -> list[str]:
 def get_default_voice() -> str:
     """Return the default Hugging Face voice."""
     return HF_DEFAULTS.voice
+
+
+def get_env_voice_override() -> str | None:
+    """Return the optional env-driven voice override, if configured."""
+    value = (getattr(config, "REACHY_MINI_VOICE", None) or "").strip()
+    if value:
+        return value
+    fallback = (os.getenv(REACHY_MINI_VOICE_ENV) or "").strip()
+    return fallback or None
 
 
 def get_hf_session_url() -> str | None:

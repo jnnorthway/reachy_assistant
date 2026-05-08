@@ -260,6 +260,8 @@ Create custom profiles with dedicated instructions and per-profile tool access.
 
 Select and save a startup profile in the UI. The choice is stored in `startup_settings.json`. Before one is saved, `REACHY_MINI_CUSTOM_PROFILE=<name>` can select `profiles/<name>/`; otherwise the app uses `default`.
 
+`REACHY_MINI_VOICE=<voice_name>` forces a startup voice for any profile. It takes precedence over the `voice` field in `profile.md`.
+
 Every profile directory contains one strict schema-version-1 `profile.md`. TOML metadata is enclosed by `+++`; the remaining Markdown body is the realtime assistant prompt:
 
 ```markdown

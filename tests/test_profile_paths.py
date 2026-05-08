@@ -211,6 +211,36 @@ def test_headless_profile_write_skips_empty_greeting(
     assert "greeting =" not in profile_text
 
 
+def test_session_voice_env_override_takes_precedence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """REACHY_MINI_VOICE should override the profile voice when set."""
+    profile_dir = tmp_path / "voice_env_test"
+    write_profile("voice_env_test", profile_dir, "Speak.", [], voice="Kore")
+
+    monkeypatch.setattr(config, "PROFILES_DIRECTORY", tmp_path)
+    monkeypatch.setattr(config, "REACHY_MINI_CUSTOM_PROFILE", "voice_env_test")
+    monkeypatch.setattr(config, "REACHY_MINI_VOICE", "Aiden")
+
+    assert prompts_mod.get_session_voice() == "Aiden"
+
+
+def test_session_voice_profile_voice_used_without_env_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Profile voice should apply when REACHY_MINI_VOICE is not set."""
+    profile_dir = tmp_path / "voice_profile_test"
+    write_profile("voice_profile_test", profile_dir, "Speak.", [], voice="Orus")
+
+    monkeypatch.setattr(config, "PROFILES_DIRECTORY", tmp_path)
+    monkeypatch.setattr(config, "REACHY_MINI_CUSTOM_PROFILE", "voice_profile_test")
+    monkeypatch.setattr(config, "REACHY_MINI_VOICE", None)
+
+    assert prompts_mod.get_session_voice(default="Kore") == "Orus"
+
+
 def test_headless_profile_write_defaults_voice_at_call_time(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -3,7 +3,12 @@
 import logging
 from pathlib import Path
 
-from reachy_mini_conversation_app.config import HF_SPEECH_LANGUAGES, config, get_default_voice
+from reachy_mini_conversation_app.config import (
+    HF_SPEECH_LANGUAGES,
+    config,
+    get_default_voice,
+    get_env_voice_override,
+)
 from reachy_mini_conversation_app.memory import format_memory_for_prompt
 from reachy_mini_conversation_app.profile_store import (
     DEFAULT_PROFILE_NAME,
@@ -12,6 +17,7 @@ from reachy_mini_conversation_app.profile_store import (
     read_profile,
     canonical_profile_name,
     read_packaged_default_profile,
+)
 )
 
 
@@ -72,8 +78,11 @@ def get_session_instructions(instance_path: str | Path | None = None) -> str:
 
 
 def get_session_voice(default: str | None = None) -> str:
-    """Return the active profile voice or the backend default."""
+    """Return the env voice override, the active profile voice, or the backend default."""
     fallback = get_default_voice() if default is None else default
+    env_voice = get_env_voice_override()
+    if env_voice:
+        return env_voice
     try:
         return _active_profile().voice or fallback
     except (FileNotFoundError, ProfileFormatError) as exc:
