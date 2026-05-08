@@ -14,7 +14,7 @@ from platformdirs import user_config_dir
 
 # Locked profile: set to a profile name (e.g., "astronomer") to lock the app
 # to that profile and disable all profile switching. Leave as None for normal behavior.
-LOCKED_PROFILE: str | None = None
+LOCKED_PROFILE: str | None = "kevin"
 PROJECT_ROOT = Path(__file__).parents[2].resolve()
 
 
