@@ -3,7 +3,12 @@ import sys
 import logging
 from pathlib import Path
 
-from reachy_mini_conversation_app.config import DEFAULT_PROFILES_DIRECTORY, config, get_default_voice_for_backend
+from reachy_mini_conversation_app.config import (
+    DEFAULT_PROFILES_DIRECTORY,
+    config,
+    get_default_voice_for_backend,
+    get_env_voice_override,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -94,11 +99,16 @@ def get_session_instructions() -> str:
 def get_session_voice(default: str | None = None) -> str:
     """Resolve the voice to use for the session.
 
-    If a custom profile is selected and contains a voice.txt, return its
-    trimmed content; otherwise return the provided default or the active
-    backend default voice.
+    Precedence:
+    1) REACHY_MINI_VOICE environment override
+    2) selected profile voice.txt
+    3) provided default or active backend default voice
     """
     fallback = get_default_voice_for_backend() if default is None else default
+    env_voice = get_env_voice_override()
+    if env_voice:
+        return env_voice
+
     profile = config.REACHY_MINI_CUSTOM_PROFILE
     if not profile:
         return fallback

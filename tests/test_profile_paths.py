@@ -113,8 +113,41 @@ def test_session_voice_defaults_follow_selected_backend(monkeypatch: pytest.Monk
     monkeypatch.setattr(config, "BACKEND_PROVIDER", "gemini")
     monkeypatch.setattr(config, "MODEL_NAME", "gemini-3.1-flash-live-preview")
     monkeypatch.setattr(config, "REACHY_MINI_CUSTOM_PROFILE", None)
+    monkeypatch.setattr(config, "REACHY_MINI_VOICE", None)
 
     assert prompts_mod.get_session_voice() == "Kore"
+
+
+def test_session_voice_env_override_takes_precedence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """REACHY_MINI_VOICE should override profile voice.txt when set."""
+    profile_dir = tmp_path / "profiles" / "voice_env_test"
+    profile_dir.mkdir(parents=True)
+    (profile_dir / "voice.txt").write_text("Kore\n", encoding="utf-8")
+
+    monkeypatch.setattr(config, "PROFILES_DIRECTORY", tmp_path / "profiles")
+    monkeypatch.setattr(config, "REACHY_MINI_CUSTOM_PROFILE", "voice_env_test")
+    monkeypatch.setattr(config, "REACHY_MINI_VOICE", "Aiden")
+
+    assert prompts_mod.get_session_voice() == "Aiden"
+
+
+def test_session_voice_profile_voice_file_used_without_env_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Profile voice.txt should apply when REACHY_MINI_VOICE is not set."""
+    profile_dir = tmp_path / "profiles" / "voice_profile_test"
+    profile_dir.mkdir(parents=True)
+    (profile_dir / "voice.txt").write_text("Orus\n", encoding="utf-8")
+
+    monkeypatch.setattr(config, "PROFILES_DIRECTORY", tmp_path / "profiles")
+    monkeypatch.setattr(config, "REACHY_MINI_CUSTOM_PROFILE", "voice_profile_test")
+    monkeypatch.setattr(config, "REACHY_MINI_VOICE", None)
+
+    assert prompts_mod.get_session_voice(default="Kore") == "Orus"
 
 
 def test_headless_profile_write_defaults_voice_at_call_time(

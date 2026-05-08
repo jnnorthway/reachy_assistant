@@ -91,6 +91,7 @@ HF_BACKEND = "huggingface"
 DEFAULT_BACKEND_PROVIDER = HF_BACKEND
 HF_REALTIME_CONNECTION_MODE_ENV = "HF_REALTIME_CONNECTION_MODE"
 HF_REALTIME_WS_URL_ENV = "HF_REALTIME_WS_URL"
+REACHY_MINI_VOICE_ENV = "REACHY_MINI_VOICE"
 HF_LOCAL_CONNECTION_MODE = "local"
 HF_DEPLOYED_CONNECTION_MODE = "deployed"
 HF_REALTIME_SESSION_PROXY_URL = "https://pollen-robotics-reachy-mini-realtime-url.hf.space/session"
@@ -385,6 +386,7 @@ class Config:
     TOOLS_DIRECTORY = Path(_tools_directory_env) if _tools_directory_env else None
     AUTOLOAD_EXTERNAL_TOOLS = _env_flag("AUTOLOAD_EXTERNAL_TOOLS", default=False)
     REACHY_MINI_CUSTOM_PROFILE = LOCKED_PROFILE or os.getenv("REACHY_MINI_CUSTOM_PROFILE")
+    REACHY_MINI_VOICE = os.getenv(REACHY_MINI_VOICE_ENV)
 
     logger.debug(f"Custom Profile: {REACHY_MINI_CUSTOM_PROFILE}")
 
@@ -470,6 +472,7 @@ def refresh_runtime_config_from_env() -> None:
     config.LOCAL_VISION_MODEL = os.getenv("LOCAL_VISION_MODEL", "HuggingFaceTB/SmolVLM2-2.2B-Instruct")
     config.HF_TOKEN = os.getenv("HF_TOKEN")
     config.REACHY_MINI_CUSTOM_PROFILE = LOCKED_PROFILE or os.getenv("REACHY_MINI_CUSTOM_PROFILE")
+    config.REACHY_MINI_VOICE = os.getenv(REACHY_MINI_VOICE_ENV)
 
 
 def get_backend_choice(model_name: str | None = None) -> str:
@@ -504,6 +507,15 @@ def get_default_voice_for_backend(backend: str | None = None) -> str:
     """Return the default voice for a backend selector value."""
     normalized_backend = get_backend_choice() if backend is None else _normalize_backend_provider(backend)
     return DEFAULT_VOICE_BY_BACKEND[normalized_backend]
+
+
+def get_env_voice_override() -> str | None:
+    """Return the optional env-driven voice override, if configured."""
+    value = (getattr(config, "REACHY_MINI_VOICE", None) or "").strip()
+    if value:
+        return value
+    fallback = (os.getenv(REACHY_MINI_VOICE_ENV) or "").strip()
+    return fallback or None
 
 
 def get_hf_session_url() -> str | None:

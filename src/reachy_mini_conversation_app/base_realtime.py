@@ -639,9 +639,13 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
             # If this tool call was triggered by an idle signal, don't make the robot speak.
             # For other tool calls, let the robot reply out loud.
             if not bg_tool.is_idle_tool_call:
+                followup_instructions = (
+                    f"{self._get_session_instructions()}\n\n"
+                    "Use the tool result just returned and answer concisely in speech."
+                )
                 await self._safe_response_create(
                     response=RealtimeResponseCreateParamsParam(
-                        instructions="Use the tool result just returned and answer concisely in speech.",
+                        instructions=followup_instructions,
                     ),
                 )
 
