@@ -198,6 +198,20 @@ reachy-mini-conversation-app --no-camera
 reachy-mini-conversation-app --ui
 ```
 
+### Run at startup with systemd
+
+This checkout includes `kevin.service`, which waits for `reachy-mini-daemon.service`, enables the motors, plays the wake-up motion, then starts `reachy-mini-conversation-app`.
+
+```bash
+sudo cp kevin.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable reachy-mini-daemon.service
+sudo systemctl enable --now kevin.service
+journalctl -u kevin.service -f
+```
+
+If the repository is not `/home/pollen/source/reachy_assistant`, edit `WorkingDirectory`, `ExecStart`, and the `ExecStartPre` paths in the unit file before copying it.
+
 ## LLM tools exposed to the assistant
 
 The default profile exposes these tools. Use Tools → Tool access to customize any profile.

@@ -18,7 +18,6 @@ from reachy_mini_conversation_app.profile_store import (
     canonical_profile_name,
     read_packaged_default_profile,
 )
-)
 
 
 logger = logging.getLogger(__name__)
