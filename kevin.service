@@ -1,0 +1,26 @@
+[Unit]
+Description=Kevin Bot
+After=network-online.target reachy-mini-daemon.service
+Wants=network-online.target
+Requires=reachy-mini-daemon.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pollen/source/reachy_assistant
+PermissionsStartOnly=true
+User=pollen
+Group=pollen
+Environment=PYTHONUNBUFFERED=1
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+Environment=PULSE_SERVER=unix:/run/user/%U/pulse/native
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%U/bus
+ExecStartPre=/usr/bin/bash -lc 'echo "Enable motors"; /home/pollen/source/reachy_assistant/.venv/bin/python -c "from reachy_mini import ReachyMini; ReachyMini().enable_motors()"'
+ExecStartPre=/usr/bin/bash -lc 'echo "Wake up animation"; /home/pollen/source/reachy_assistant/.venv/bin/python -c "from reachy_mini import ReachyMini; ReachyMini().wake_up()"'
+ExecStart=/home/pollen/source/reachy_assistant/.venv/bin/reachy-mini-conversation-app
+Restart=always
+RestartSec=3
+KillMode=control-group
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

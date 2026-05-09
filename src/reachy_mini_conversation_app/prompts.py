@@ -3,6 +3,7 @@ import sys
 import logging
 from pathlib import Path
 
+from reachy_mini_conversation_app.tools.remember import load_facts
 from reachy_mini_conversation_app.config import (
     DEFAULT_PROFILES_DIRECTORY,
     config,
@@ -86,6 +87,11 @@ def get_session_instructions() -> str:
             if instructions:
                 # Expand [<name>] placeholders with content from prompts library
                 expanded_instructions = _expand_prompt_includes(instructions)
+                # Append any persisted facts so the model knows them from the start
+                facts = load_facts()
+                if facts:
+                    facts_block = "\n\n## What Kevin remembers:\n" + "\n".join(f"- {f}" for f in facts)
+                    expanded_instructions += facts_block
                 return expanded_instructions
             logger.error(f"Profile '{profile}' has empty {INSTRUCTIONS_FILENAME}")
             sys.exit(1)

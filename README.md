@@ -223,6 +223,43 @@ reachy-mini-conversation-app --no-camera
 reachy-mini-conversation-app --gradio
 ```
 
+### Run at startup with systemd
+
+This repository includes a simple systemd unit template:
+
+- Unit template: `kevin.service`
+
+The app service now explicitly requires `reachy-mini-daemon.service`.
+
+On service start, the unit runs this pre-start sequence before starting the app:
+
+1. `Cleaning up existing daemons...`
+2. `Daemon stopped`
+3. `Enable motors`
+4. `Wake up animation`
+
+It then starts `reachy-mini-conversation-app` directly.
+
+Install and enable the service:
+
+```bash
+sudo cp kevin.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable reachy-mini-daemon.service
+sudo systemctl enable --now kevin.service
+```
+
+Check logs:
+
+```bash
+journalctl -u kevin.service -f
+```
+
+If your repository path is not `/home/pollen/source/reachy_assistant`, edit these fields in the unit file before copying it:
+
+- `WorkingDirectory`
+- `ExecStart`
+
 > [!WARNING]
 > `--local-vision` is not supported when running the conversation app directly on Reachy Mini Wireless / the Raspberry Pi. For local vision, keep the daemon running on the robot and start the conversation app from your laptop or workstation instead.
 

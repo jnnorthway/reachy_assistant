@@ -8,6 +8,7 @@ from reachy_mini_conversation_app.camera_frame_encoding import encode_bgr_frame_
 
 
 logger = logging.getLogger(__name__)
+_VISION_TIMEOUT_S = 6.0
 
 
 class Camera(Tool):
@@ -45,16 +46,42 @@ class Camera(Tool):
             return {"error": "Camera worker not available"}
 
         if deps.vision_processor is not None:
-            vision_result = await asyncio.to_thread(
-                deps.vision_processor.process_image,
-                frame,
-                question,
-            )
-            return (
-                {"image_description": vision_result}
-                if isinstance(vision_result, str)
-                else {"error": "vision returned non-string"}
-            )
+            try:
+                vision_result = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        deps.vision_processor.process_image,
+                        frame,
+                        question,
+                    ),
+                    timeout=_VISION_TIMEOUT_S,
+                )
+                return (
+                    {"image_description": vision_result}
+                    if isinstance(vision_result, str)
+                    else {"error": "vision returned non-string"}
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "camera local vision timed out after %.1fs; handing image to backend vision instead",
+                    _VISION_TIMEOUT_S,
+                )
+                jpeg_bytes = encode_bgr_frame_as_jpeg(frame)
+                return {
+                    "b64_im": base64.b64encode(jpeg_bytes).decode("utf-8"),
+                    "vision_backend_handoff": True,
+                    "local_vision_fallback_reason": "timeout",
+                }
+            except Exception as e:
+                logger.warning("camera local vision failed, handing image to backend vision instead: %s", e)
+                jpeg_bytes = encode_bgr_frame_as_jpeg(frame)
+                return {
+                    "b64_im": base64.b64encode(jpeg_bytes).decode("utf-8"),
+                    "vision_backend_handoff": True,
+                    "local_vision_fallback_reason": type(e).__name__,
+                }
 
         jpeg_bytes = encode_bgr_frame_as_jpeg(frame)
-        return {"b64_im": base64.b64encode(jpeg_bytes).decode("utf-8")}
+        return {
+            "b64_im": base64.b64encode(jpeg_bytes).decode("utf-8"),
+            "vision_backend_handoff": True,
+        }

@@ -3,6 +3,11 @@ stop_dance
 play_emotion
 stop_emotion
 camera
-idle_do_nothing
 head_tracking
 move_head
+twist_body
+wake_up
+goto_sleep
+remember
+get_time
+get_location

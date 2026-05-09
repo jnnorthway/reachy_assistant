@@ -45,6 +45,7 @@ logger = logging.getLogger(__name__)
 
 _RESPONSE_DONE_TIMEOUT: Final[float] = 30.0
 _RESPONSE_REJECTION_RETRY_DELAY: Final[float] = 0.5
+_IDLE_SIGNAL_INTERVAL_SECONDS: Final[float] = 25.0
 
 
 class InputTranscriptChunksByItem(BaseModel):
@@ -134,6 +135,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         self.last_activity_time = asyncio.get_event_loop().time()
         self.start_time = asyncio.get_event_loop().time()
         self.is_idle_tool_call = False
+        self._idle_followup_pending = False
         self.gradio_mode = gradio_mode
         self.instance_path = instance_path
         self._voice_override: str | None = self._normalize_startup_voice(startup_voice)
@@ -159,6 +161,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         self._pending_responses: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._response_done_event: asyncio.Event = asyncio.Event()
         self._response_done_event.set()
+        self._response_request_pending = False
         self._response_started_or_rejected_event: asyncio.Event = asyncio.Event()
         self._last_response_rejected: bool = False
         self._turn_user_done_at: float | None = None
@@ -166,13 +169,12 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         self._turn_first_audio_at: float | None = None
 
     @staticmethod
-    def _sanitize_tool_result_for_model(tool_name: str, tool_result: dict[str, Any]) -> dict[str, Any]:
+    def _sanitize_tool_result_for_model(tool_name: str, tool_result: dict[str, Any]) -> dict[str, Any] | str:
         """Remove bulky transport-only fields before echoing tool output back to the model."""
         if tool_name == "camera" and "b64_im" in tool_result:
-            sanitized = dict(tool_result)
-            sanitized.pop("b64_im", None)
-            sanitized["image_attached"] = True
-            return sanitized
+            # The image is attached separately as input_image; give the model a plain
+            # text cue instead of a JSON metadata blob that it would read aloud.
+            return "Image captured and attached. Describe what you observe."
         return tool_result
 
     def _normalize_startup_voice(self, voice: str | None) -> str | None:
@@ -449,6 +451,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
 
         This method never blocks the caller.
         """
+        self._response_request_pending = True
         await self._pending_responses.put(kwargs)
 
     async def _response_sender_loop(self) -> None:
@@ -492,6 +495,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                     await self.connection.response.create(**kwargs)
                 except Exception as e:
                     logger.debug("_response_sender_loop: send failed: %s", e)
+                    self._response_request_pending = False
                     self._response_done_event.set()
                     break
 
@@ -507,6 +511,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                 if self._last_response_rejected:
                     attempts += 1
                     if attempts >= max_retries:
+                        self._response_request_pending = False
                         logger.debug("response.create rejected %d times; giving up", attempts)
                         break
                     logger.debug("response.create was rejected; retrying (%d/%d)", attempts, max_retries)
@@ -520,6 +525,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                     )
                 except asyncio.TimeoutError:
                     logger.debug("Timed out waiting for response.done; assuming response completed")
+                    self._response_request_pending = False
                     self._response_done_event.set()
                     break
 
@@ -636,9 +642,25 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                         ),
                     )
 
-            # If this tool call was triggered by an idle signal, don't make the robot speak.
-            # For other tool calls, let the robot reply out loud.
-            if not bg_tool.is_idle_tool_call:
+            # Let the robot reply out loud after tool execution.
+            if bg_tool.is_idle_tool_call:
+                if self._idle_followup_pending:
+                    self._idle_followup_pending = False
+                    followup_instructions = (
+                        f"{self._get_session_instructions()}\n\n"
+                        "This was an idle proactive turn. Use the latest tool results to ground your line in what you "
+                        "observed around you. If you noticed a person, ask a friendly name/intro question. If you "
+                        "noticed an object, ask a short curiosity question about it (for example its purpose or owner). "
+                        "Do not narrate your own motions or tool usage (for example do not say you looked left/right). "
+                        "Speak naturally in 1 short sentence and end with exactly 1 specific question. Do not call any "
+                        "tools in this response."
+                    )
+                    await self._safe_response_create(
+                        response=RealtimeResponseCreateParamsParam(
+                            instructions=followup_instructions,
+                        ),
+                    )
+            else:
                 followup_instructions = (
                     f"{self._get_session_instructions()}\n\n"
                     "Use the tool result just returned and answer concisely in speech."
@@ -699,11 +721,15 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
 
                 # Start the response sender worker
                 response_sender_task = asyncio.create_task(self._response_sender_loop(), name="response-sender")
+                asyncio.create_task(self._send_startup_greeting(), name="startup-greeting")
 
                 async for event in self.connection:
                     logger.debug("Realtime event: %s", event.type)
                     if event.type == "input_audio_buffer.speech_started":
                         self._mark_activity("user_speech_started")
+                        # User took over: cancel any pending idle-turn context.
+                        self.is_idle_tool_call = False
+                        self._idle_followup_pending = False
                         self._turn_user_done_at = None
                         self._turn_response_created_at = None
                         self._turn_first_audio_at = None
@@ -726,6 +752,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
 
                     if event.type == "response.created":
                         self._mark_activity("response_created")
+                        self._response_request_pending = False
                         self._response_done_event.clear()
                         self._response_started_or_rejected_event.set()
                         if self._turn_user_done_at is not None and self._turn_response_created_at is None:
@@ -736,6 +763,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
 
                     if event.type == "response.done":
                         # Doesn't mean the audio is done playing
+                        self._response_request_pending = False
                         self._response_done_event.set()
                         self._response_started_or_rejected_event.set()
                         self.is_idle_tool_call = False
@@ -779,6 +807,9 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                     # Handle completed transcription (user finished speaking)
                     if event.type == "conversation.item.input_audio_transcription.completed":
                         self._mark_activity("user_transcription_completed")
+                        # User transcript always starts a normal (non-idle) turn.
+                        self.is_idle_tool_call = False
+                        self._idle_followup_pending = False
                         raw_transcript = event.transcript or ""
                         transcript = raw_transcript.strip()
                         logger.debug("User transcript: %s", raw_transcript)
@@ -833,12 +864,13 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                         tool_name = getattr(event, "name", None)
                         args_json_str = getattr(event, "arguments", None)
                         call_id: str = str(getattr(event, "call_id", uuid.uuid4()))
+                        is_idle_for_this_tool = self.is_idle_tool_call or self._idle_followup_pending
 
                         logger.info(
                             "Tool call received — tool_name=%r, call_id=%s, is_idle=%s, args=%s",
                             tool_name,
                             call_id,
-                            self.is_idle_tool_call,
+                            is_idle_for_this_tool,
                             args_json_str,
                         )
 
@@ -860,7 +892,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                                 args_json_str=args_json_str,
                                 deps=self.deps,
                             ),
-                            is_idle_tool_call=self.is_idle_tool_call,
+                            is_idle_tool_call=is_idle_for_this_tool,
                         )
 
                         await self.output_queue.put(
@@ -960,7 +992,12 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
 
         # Handle idle
         idle_duration = asyncio.get_event_loop().time() - self.last_activity_time
-        if idle_duration > 180.0 and self._response_done_event.is_set() and self.deps.movement_manager.is_idle():
+        if (
+            idle_duration > _IDLE_SIGNAL_INTERVAL_SECONDS
+            and not self._response_request_pending
+            and self._response_done_event.is_set()
+            and self.deps.movement_manager.is_idle()
+        ):
             try:
                 await self.send_idle_signal(idle_duration)
             except Exception as e:
@@ -1023,7 +1060,12 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         """Send an idle signal to the realtime server."""
         logger.debug("Sending idle signal")
         self.is_idle_tool_call = True
-        timestamp_msg = f"[Idle time update: {self.format_timestamp()} - No activity for {idle_duration:.1f}s] You've been idle for a while. Feel free to get creative - dance, show an emotion, look around, call idle_do_nothing to stay still and silent, or just be yourself!"
+        self._idle_followup_pending = True
+        timestamp_msg = (
+            f"[Idle time update: {self.format_timestamp()} - No activity for {idle_duration:.1f}s] "
+            "Take a proactive idle action now. Prefer looking around with move_head (and optionally camera) "
+            "before anything else. Use idle_do_nothing only when you intentionally need to stay still this turn."
+        )
         if not self.connection:
             logger.debug("No connection, cannot send idle signal")
             return
@@ -1036,7 +1078,59 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         )
         await self._safe_response_create(
             response=RealtimeResponseCreateParamsParam(
-                instructions="You MUST respond with function calls only - no speech or text. Choose appropriate actions for idle behavior. Use idle_do_nothing only if you intentionally want no movement or sound during this idle turn.",
+                instructions=(
+                    "You MUST respond with function calls only for this step. Select at least one proactive tool call, "
+                    "prefer move_head to look around, and use camera only when you need visual detail to ask a specific "
+                    "question about a person or object in view. Avoid idle_do_nothing unless intentionally staying still. "
+                    "Keep movement itself non-verbal; the later speech should reference observations, not movement commands."
+                ),
                 tool_choice="required",
             ),
         )
+
+    async def _send_startup_greeting(self) -> None:
+        """Queue one short spoken greeting when a realtime session becomes active."""
+        if not self.connection:
+            return
+
+        funny_startup_lines = [
+            "Kevin alive.",
+            "Kevin real robot.",
+            "Kevin online now.",
+            "Kevin awake. Brain zoom.",
+            "Beep boop. Kevin here.",
+        ]
+        startup_line = random.choice(funny_startup_lines)
+
+        try:
+            await self.connection.conversation.item.create(
+                item={
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": (
+                                f"[Startup signal: {self.format_timestamp()}] You just woke up. "
+                                f"Use this exact opening sentence first: '{startup_line}' "
+                                "Then add one short curious follow-up question to start interaction. "
+                                "Use Kevin style: short simple fragments, refer to self as Kevin, no fancy wording."
+                            ),
+                        }
+                    ],
+                },
+            )
+            await self._safe_response_create(
+                response=RealtimeResponseCreateParamsParam(
+                    instructions=(
+                        f"{self._get_session_instructions()}\n\n"
+                        "You are delivering the startup greeting. Keep the provided opening sentence exact, then add "
+                        "one brief curious question. Keep strict Kevin style: short simple sentence fragments, refer to "
+                        "self as Kevin, avoid assistant-like wording. "
+                        "Do not call any tools for this startup greeting."
+                    ),
+                ),
+            )
+            self._mark_activity("startup_greeting")
+        except Exception as e:
+            logger.warning("Startup greeting skipped: %s", e)
