@@ -30,6 +30,9 @@ class SileroVAD:
     MIN_SPEECH_SAMPLES = 2560  # 160 ms, ignores knocks and clicks
     SILENCE_SAMPLES = 6400  # 400 ms
     IDLE_RESET_SAMPLES = 8000  # 500 ms
+    BARGE_IN_START_PROBABILITY = 0.75  # knocks below this used to duck playback
+    BARGE_IN_HOLD_PROBABILITY = 0.6
+    BARGE_IN_MIN_SPEECH_SAMPLES = 2560  # 160 ms
     BARGE_IN_SILENCE_SAMPLES = 1024  # 64 ms
 
     def __init__(self) -> None:
@@ -72,6 +75,8 @@ class SileroVAD:
         self.speech_probability = 0.0
         self._silence_samples = 0
         self.barge_in_candidate = False
+        self._barge_in_voiced = False
+        self._barge_in_speech_samples = 0
         self._barge_in_silence_samples = 0
 
     def _reset_model(self) -> None:
@@ -86,6 +91,8 @@ class SileroVAD:
             raise ValueError("Local VAD requires 16 kHz microphone audio")
         if not detect_barge_in:
             self.barge_in_candidate = False
+            self._barge_in_voiced = False
+            self._barge_in_speech_samples = 0
             self._barge_in_silence_samples = 0
         self._pending = np.concatenate((self._pending, audio.reshape(-1).astype(np.float32) / 32768.0))
         offset = 0
@@ -101,13 +108,20 @@ class SileroVAD:
             speech_probability = float(np.asarray(probability).item())
             self.speech_probability = speech_probability
             if detect_barge_in:
-                if speech_probability >= 0.6 or (self.barge_in_candidate and speech_probability >= 0.45):
-                    self.barge_in_candidate = True
+                holding = self._barge_in_voiced or self.barge_in_candidate
+                threshold = self.BARGE_IN_HOLD_PROBABILITY if holding else self.BARGE_IN_START_PROBABILITY
+                if speech_probability >= threshold:
+                    self._barge_in_voiced = True
                     self._barge_in_silence_samples = 0
-                elif self.barge_in_candidate:
+                    self._barge_in_speech_samples += self.CHUNK_SAMPLES
+                    if self._barge_in_speech_samples >= self.BARGE_IN_MIN_SPEECH_SAMPLES:
+                        self.barge_in_candidate = True
+                elif self._barge_in_voiced or self.barge_in_candidate:
+                    self._barge_in_speech_samples = 0
                     self._barge_in_silence_samples += self.CHUNK_SAMPLES
                     if self._barge_in_silence_samples >= self.BARGE_IN_SILENCE_SAMPLES:
                         self.barge_in_candidate = False
+                        self._barge_in_voiced = False
                         self._barge_in_silence_samples = 0
             if speech_probability >= 0.5:
                 self._idle_samples = 0

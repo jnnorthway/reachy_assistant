@@ -1,3 +1,4 @@
+import math
 import time
 import threading
 from unittest.mock import MagicMock, call
@@ -7,6 +8,7 @@ import numpy as np
 import pytest
 
 from reachy_mini.utils import create_head_pose
+from reachy_mini.utils.rotation import Rotation as R
 from reachy_mini.utils.interpolation import compose_world_offset
 from reachy_mini_conversation_app.moves import (
     BreathingMove,
@@ -174,6 +176,51 @@ def test_breathing_move_interpolates_then_breathes() -> None:
     assert head_breathe is not None
     assert antennas_breathe is not None and antennas_breathe.shape == (2,)
     assert body_yaw_breathe == 0.0
+
+
+def _head_yaw(pose: np.ndarray) -> float:
+    return float(R.from_matrix(pose[:3, :3]).as_euler("xyz")[2])
+
+
+def test_breathing_move_returns_body_yaw_with_the_head() -> None:
+    """Idle return eases the base back with the head instead of snapping it to center."""
+    start_yaw = math.radians(50)
+    move = BreathingMove(
+        interpolation_start_pose=create_head_pose(yaw=50),
+        interpolation_start_antennas=(0.1, -0.1),
+        interpolation_duration=1.0,
+        start_body_yaw=start_yaw,
+    )
+    head_start, _, body_yaw_start = move.evaluate(0.0)
+    assert head_start is not None
+    assert body_yaw_start == pytest.approx(start_yaw)
+    assert _head_yaw(head_start) == pytest.approx(body_yaw_start)
+
+    head_quarter, _, body_yaw_quarter = move.evaluate(0.25)
+    assert head_quarter is not None
+    assert abs(start_yaw - body_yaw_quarter) < abs(start_yaw) * 0.25
+    assert _head_yaw(head_quarter) == pytest.approx(body_yaw_quarter)
+
+    _, _, body_yaw_done = move.evaluate(1.0)
+    assert body_yaw_done == pytest.approx(0.0)
+
+
+def test_breathing_starts_from_the_current_base_yaw() -> None:
+    """The idle return reads body yaw from the head joints, not a hardcoded zero."""
+    robot = MagicMock()
+    robot.get_current_joint_positions.return_value = ([0.4, 0, 0, 0, 0, 0, 0], (0.1, 0.2))
+    robot.get_current_head_pose.return_value = create_head_pose(yaw=math.degrees(0.4))
+    manager = MovementManager(robot)
+    manager._is_listening = False
+    manager._breathing_active = False
+    manager.state.current_move = None
+    manager.state.last_activity_time = manager._now() - 10
+    manager._manage_breathing(manager._now())
+
+    assert len(manager.move_queue) == 1
+    move = manager.move_queue[0]
+    assert isinstance(move, BreathingMove)
+    assert move.start_body_yaw == pytest.approx(0.4)
 
 
 def test_is_idle_reflects_listening_and_activity() -> None:

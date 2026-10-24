@@ -14,6 +14,7 @@ import reachy_mini_conversation_app.conversation_handler as conv_mod
 import reachy_mini_conversation_app.huggingface_realtime as hf_mod
 from reachy_mini_conversation_app.config import config, get_default_voice, refresh_runtime_config_from_env
 from reachy_mini_conversation_app.streaming import AdditionalOutputs
+from reachy_mini_conversation_app.sleep_mode import sleep_mode
 from reachy_mini_conversation_app.tools.core_tools import ToolDependencies
 from reachy_mini_conversation_app.conversation_handler import VADStatus
 from reachy_mini_conversation_app.huggingface_realtime import HuggingFaceRealtimeHandler
@@ -540,6 +541,62 @@ def test_huggingface_session_uses_configured_transcription_language(
     assert session["audio"]["input"]["transcription"]["language"] == language
 
 
+def test_kevin_turn_detection_waits_longer_and_can_stay_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Kevin waits through pauses, and an asleep session does not answer on its own."""
+    monkeypatch.setattr(config, "REACHY_MINI_CUSTOM_PROFILE", "kevin")
+    sleep_mode.reset()
+    sleep_mode.set_notifier(None)
+    handler = HuggingFaceRealtimeHandler(ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock()))
+    try:
+        awake = handler._get_session_config([])["audio"]["input"]["turn_detection"]
+        assert awake["interrupt_response"] is True
+        assert awake["create_response"] is True
+        assert awake["silence_duration_ms"] == 600
+        assert awake["threshold"] == 0.65
+        sleep_mode.mark_asleep()
+        quiet = handler._get_session_config([])["audio"]["input"]["turn_detection"]
+        assert quiet["interrupt_response"] is False
+        assert quiet["create_response"] is False
+        assert quiet["silence_duration_ms"] == 600
+    finally:
+        sleep_mode.reset()
+        sleep_mode.set_notifier(None)
+
+
+@pytest.mark.asyncio
+async def test_asleep_session_cancels_autoresponse(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Speech while asleep does not become a chat reply."""
+    sleep_mode.reset()
+    sleep_mode.set_notifier(None)
+    sleep_mode.mark_asleep()
+    try:
+        handler = _session_handler(monkeypatch, (_FakeEvent("response.created"),))
+        await handler._run_realtime_session()
+        assert "response-1" in handler._discarded_response_ids
+    finally:
+        sleep_mode.reset()
+        sleep_mode.set_notifier(None)
+
+
+@pytest.mark.asyncio
+async def test_startup_greeting_is_skipped_while_asleep(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An asleep robot does not play the startup greeting."""
+    sleep_mode.reset()
+    sleep_mode.set_notifier(None)
+    sleep_mode.mark_asleep()
+    try:
+        handler = _plain_handler()
+        handler.connection = MagicMock()
+        handler.connection.conversation.item.create = AsyncMock()
+        monkeypatch.setattr(hf_mod, "get_session_greeting_prompt", lambda: "say hi")
+        await handler._send_startup_greeting_prompt()
+        handler.connection.conversation.item.create.assert_not_awaited()
+        assert handler._startup_greeting_sent
+    finally:
+        sleep_mode.reset()
+        sleep_mode.set_notifier(None)
+
+
 @pytest.mark.parametrize(
     "profile, expected_language, expected_rule",
     [
@@ -994,9 +1051,41 @@ def test_sanitize_tool_result_strips_camera_image() -> None:
 
 
 def test_sanitize_tool_result_passthrough_for_non_camera() -> None:
-    """Non-camera results are returned unchanged."""
+    """Results without an image are returned unchanged."""
     result = {"status": "ok"}
     assert HuggingFaceRealtimeHandler._sanitize_tool_result_for_model("dance", result) == result
+
+
+def test_sanitize_tool_result_strips_look_direction_image() -> None:
+    """A directional look keeps the direction and drops the raw frame."""
+    sanitized = HuggingFaceRealtimeHandler._sanitize_tool_result_for_model(
+        "look_direction",
+        {"b64_im": "abc", "direction": "left", "captured_after_look": True},
+    )
+    assert sanitized == {"direction": "left", "captured_after_look": True, "image_attached": True}
+
+
+@pytest.mark.asyncio
+async def test_handle_tool_result_attaches_look_direction_frame() -> None:
+    """The follow-up response sees the frame captured after the look, not the raw base64 text."""
+    handler = _plain_handler()
+    handler.connection = _FakeConnection()
+    note = ToolNotification(
+        id="c1",
+        tool_name="look_direction",
+        is_idle_tool_call=False,
+        status=ToolState.COMPLETED,
+        result={"b64_im": "abc", "direction": "left", "captured_after_look": True},
+    )
+
+    await handler._handle_tool_result(note)
+
+    create = handler.connection.conversation.item.create
+    assert create.await_count == 2
+    assert "b64_im" not in create.await_args_list[0].kwargs["item"]["output"]
+    image = create.await_args_list[1].kwargs["item"]["content"][0]
+    assert image == {"type": "input_image", "image_url": "data:image/jpeg;base64,abc"}
+    assert not handler._pending_responses.empty()
 
 
 class _FakeConnection:

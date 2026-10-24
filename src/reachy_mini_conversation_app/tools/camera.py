@@ -19,6 +19,7 @@ class Camera(Tool):
         "Also use it when the user asks what you can see or wants your visual opinion. "
         "The camera is live, each call captures the current moment. "
         "If the user asks you to look without saying at what, do not ask for clarification, call this tool and describe what you see. "
+        "This photographs the current view only and does not turn or tilt the robot. "
     )
     parameters_schema = {
         "type": "object",

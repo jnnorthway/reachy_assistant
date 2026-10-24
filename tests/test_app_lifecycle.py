@@ -9,6 +9,7 @@ import pytest
 
 from reachy_mini.reachy_mini import SLEEP_HEAD_POSE
 from reachy_mini_conversation_app import daemon_api, app_lifecycle
+from reachy_mini_conversation_app.sleep_mode import sleep_mode
 from reachy_mini_conversation_app.tools.core_tools import ToolDependencies
 
 
@@ -61,6 +62,22 @@ def test_wake_up_if_sleeping_enables_motors_before_wake_up() -> None:
         call.enable_motors(),
         call.wake_up(),
     ]
+
+
+def test_wake_up_if_sleeping_skips_sticky_sleep() -> None:
+    """A saved sleep must not be undone by the startup wake movement."""
+    robot = MagicMock()
+    robot.get_current_head_pose.return_value = SLEEP_HEAD_POSE.copy()
+    sleep_mode.reset()
+    sleep_mode.set_notifier(None)
+    sleep_mode.mark_asleep()
+    try:
+        assert not app_lifecycle.wake_up_if_sleeping(robot, MagicMock())
+        robot.wake_up.assert_not_called()
+        robot.enable_motors.assert_not_called()
+    finally:
+        sleep_mode.reset()
+        sleep_mode.set_notifier(None)
 
 
 def test_wake_up_if_sleeping_skips_non_sleep_head_pose() -> None:

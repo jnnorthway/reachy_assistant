@@ -129,6 +129,7 @@ def run(
         resolve_app_timeout_minutes,
         refresh_runtime_config_from_env,
     )
+    from reachy_mini_conversation_app.sleep_mode import hold_sleep, sleep_mode, play_sleep_pose, sleep_state_path
     from reachy_mini_conversation_app.settings_store import load_settings_into_runtime
     from reachy_mini_conversation_app.startup_settings import (
         StartupSettings,
@@ -193,7 +194,12 @@ def run(
             logger.error("Please check your configuration and try again.")
             sys.exit(1)
 
-    app_lifecycle.wake_up_if_sleeping(robot, logger)
+    sleep_mode.configure(sleep_state_path())
+    sleep_mode.load()
+    if sleep_mode.quiet():
+        logger.info("Sticky sleep is active; skipping startup wake.")
+    else:
+        app_lifecycle.wake_up_if_sleeping(robot, logger)
 
     movement_manager = MovementManager(current_robot=robot)
 
@@ -254,59 +260,17 @@ def run(
         stream_manager._init_settings_ui_if_needed()
 
     go_to_sleep_lock = threading.Lock()
-    go_to_sleep_requested = threading.Event()
 
-    def go_to_sleep_and_stop_app() -> dict[str, Any]:
-        """Put Reachy to sleep, then stop the current app."""
+    def go_to_sleep_and_stay_listening() -> dict[str, Any]:
+        """Put Reachy in the sleep pose and keep the conversation listening."""
         if not go_to_sleep_lock.acquire(blocking=False):
             return {"status": "already_requested"}
-
         try:
-            if go_to_sleep_requested.is_set():
-                return {"status": "already_requested"}
-            go_to_sleep_requested.set()
-
-            logger.info("Going to sleep before stopping conversation app.")
-            sleep_error: str | None = None
-
-            try:
-                robot.disable_wobbling()
-            except Exception as e:
-                logger.debug("Error disabling wobbling before sleep: %s", e)
-
-            movement_manager.stop(reset_to_neutral=False)
-
-            try:
-                robot.goto_sleep()
-            except Exception as e:
-                sleep_error = f"{type(e).__name__}: {e}"
-                logger.error("Failed to move Reachy Mini to sleep pose: %s", e)
-
-            stop_current_app_requested = False
-            if app_stop_event is None or not app_stop_event.is_set():
-                stop_current_app_requested = app_lifecycle.request_stop_current_app(robot, logger)
-            local_stop_requested = True
-            if app_stop_event is not None:
-                app_stop_event.set()
-            else:
-                try:
-                    stream_manager.close()
-                except Exception as e:
-                    local_stop_requested = False
-                    logger.error("Error while closing stream manager after go_to_sleep: %s", e)
-
-            result: dict[str, Any] = {
-                "status": "sleeping" if sleep_error is None else "stop_requested",
-                "stop_current_app_requested": stop_current_app_requested,
-                "local_stop_requested": local_stop_requested,
-            }
-            if sleep_error is not None:
-                result["error"] = f"go_to_sleep movement failed: {sleep_error}"
-            return result
+            return hold_sleep(robot, movement_manager)
         finally:
             go_to_sleep_lock.release()
 
-    deps.go_to_sleep = go_to_sleep_and_stop_app
+    deps.go_to_sleep = go_to_sleep_and_stay_listening
 
     def run_go_to_sleep_tool() -> dict[str, Any]:
         return app_lifecycle.run_go_to_sleep_tool(deps, logger)
@@ -327,11 +291,17 @@ def run(
         sys.exit(1)
 
     # Each async service → its own thread/loop
-    movement_manager.start()
-    # Audio-reactive head motion is driven by the daemon's wobbler, which
-    # taps the media pipeline at push_audio_sample. The console stream pushes
-    # assistant audio through that pipeline directly.
-    robot.enable_wobbling()
+    if sleep_mode.quiet():
+        logger.info("Restoring sleep pose; idle motion stays off.")
+        pose_error = play_sleep_pose(robot, movement_manager)
+        if pose_error is not None:
+            logger.error("Failed to restore sleep pose: %s", pose_error)
+    else:
+        movement_manager.start()
+        # Audio-reactive head motion is driven by the daemon's wobbler, which
+        # taps the media pipeline at push_audio_sample. The console stream pushes
+        # assistant audio through that pipeline directly.
+        robot.enable_wobbling()
 
     timeout_minutes = resolve_app_timeout_minutes()
     if timeout_minutes is not None:
@@ -367,10 +337,9 @@ def run(
         if own_ui_server is not None:
             own_ui_server.should_exit = True
 
-        # Stop the motion writes without changing the robot's posture. If
-        # the shutdown came from the voice go_to_sleep tool the robot is
-        # already in the sleep pose; on a plain stop it stays awake and
-        # the daemon returns it to neutral once the process exits.
+        # Stop the motion writes without changing the robot's posture. Sleep
+        # leaves the robot in the sleep pose; a plain stop stays where it is
+        # and the daemon returns it to neutral once the process exits.
         movement_manager.stop(reset_to_neutral=False)
         try:
             robot.disable_wobbling()

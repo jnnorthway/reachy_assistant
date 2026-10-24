@@ -8,6 +8,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, Final, Tuple, Optional
 from collections import deque
+from collections.abc import Coroutine
 
 import httpx
 import numpy as np
@@ -46,6 +47,15 @@ from reachy_mini_conversation_app.prompts import (
     get_session_greeting_prompt,
 )
 from reachy_mini_conversation_app.streaming import AdditionalOutputs, audio_to_int16
+from reachy_mini_conversation_app.sleep_mode import (
+    SPRING_UP_S,
+    sleep_mode,
+    play_sleep_pose,
+    command_awake_pose,
+    exact_scare_response,
+    quiet_transcript_action,
+)
+from reachy_mini_conversation_app.tools.wake_up import run_wake_motion
 from reachy_mini_conversation_app.audio.local_vad import SileroVAD
 from reachy_mini_conversation_app.tools.core_tools import (
     ToolSpec,
@@ -72,6 +82,35 @@ _RESPONSE_REJECTION_RETRY_DELAY: Final[float] = 0.5
 AUDIO_SEND_TIMEOUT_S: Final[float] = 5.0
 # Server-measured stage timings the speech-to-speech backend attaches to response.done.
 _TURN_LATENCY_METADATA_KEY: Final[str] = "speech_to_speech.turn_latency"
+# Kevin was cutting in on short pauses and treating brief noise as speech.
+KEVIN_TURN_THRESHOLD: Final[float] = 0.65
+KEVIN_TURN_SILENCE_MS: Final[int] = 600
+KEVIN_TURN_PREFIX_MS: Final[int] = 300
+
+
+def server_turn_detection(*, respond: bool) -> ServerVad:
+    """Return server VAD settings, waiting longer when the active profile is Kevin."""
+    vad: ServerVad = {
+        "type": "server_vad",
+        "interrupt_response": respond,
+        "create_response": respond,
+    }
+    if config.REACHY_MINI_CUSTOM_PROFILE == "kevin":
+        vad["threshold"] = KEVIN_TURN_THRESHOLD
+        vad["silence_duration_ms"] = KEVIN_TURN_SILENCE_MS
+        vad["prefix_padding_ms"] = KEVIN_TURN_PREFIX_MS
+    return vad
+
+
+def _response_purpose(response: Any) -> str | None:
+    """Return a response metadata purpose when the server kept it."""
+    metadata = getattr(response, "metadata", None)
+    if not isinstance(metadata, dict):
+        return None
+    purpose = metadata.get("purpose")
+    if isinstance(purpose, str):
+        return purpose
+    return None
 
 
 class InputTranscriptChunksByItem(BaseModel):
@@ -222,6 +261,14 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
         self._audio_response_id: str | None = None
         self._discarded_response_ids: deque[str] = deque(maxlen=32)
         self._playback_interrupted = False
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._accept_one_quiet_response = False
+        self._exact_response_id: str | None = None
+        self._exact_speech_done: asyncio.Event | None = None
+        self._exact_audio_samples = 0
+        self._exact_audio_started_at: float | None = None
+        self._quiet_tasks: set[asyncio.Task[None]] = set()
+        sleep_mode.set_notifier(self._schedule_sleep_policy)
 
     def _set_listening(self, *, local: bool | None = None, server: bool | None = None) -> None:
         if local is not None:
@@ -315,13 +362,14 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
 
     @staticmethod
     def _sanitize_tool_result_for_model(tool_name: str, tool_result: dict[str, Any]) -> dict[str, Any]:
-        """Remove bulky transport-only fields before echoing tool output back to the model."""
-        if tool_name == "camera" and "b64_im" in tool_result:
-            sanitized = dict(tool_result)
-            sanitized.pop("b64_im", None)
-            sanitized["image_attached"] = True
-            return sanitized
-        return tool_result
+        """Drop image bytes from a vision result and flag that the frame was attached."""
+        if "b64_im" not in tool_result:
+            return tool_result
+        sanitized = dict(tool_result)
+        sanitized.pop("b64_im", None)
+        sanitized["image_attached"] = True
+        logger.debug("Stripped vision frame from tool result tool=%s", tool_name)
+        return sanitized
 
     def _normalize_startup_voice(self, voice: str | None) -> str | None:
         """Return a valid persisted startup voice, or None."""
@@ -382,7 +430,7 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
                         model="gpt-4o-transcribe",
                         language=get_session_language(),
                     ),
-                    turn_detection=ServerVad(type="server_vad", interrupt_response=True),
+                    turn_detection=server_turn_detection(respond=not sleep_mode.quiet()),
                 ),
                 output=RealtimeAudioConfigOutputParam(
                     format=_native_rate_audio_pcm(),  # type: ignore[typeddict-item]
@@ -398,8 +446,191 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
         return self.connection is not None
 
     def _idle_behavior_ready(self) -> bool:
-        """Hold idle behavior while a model response is still active."""
-        return self._response_done_event.is_set()
+        """Hold idle behavior while a response is active or Kevin is asleep."""
+        return self._response_done_event.is_set() and not sleep_mode.quiet()
+
+    def _schedule_sleep_policy(self) -> None:
+        """Apply the sleep turn-taking policy on the realtime loop."""
+        loop = self._loop
+        if loop is None or loop.is_closed() or not loop.is_running():
+            return
+        try:
+            loop.call_soon_threadsafe(self._kick_sleep_policy)
+        except RuntimeError as exc:
+            logger.debug("Sleep policy not scheduled: %s", exc)
+
+    def _kick_sleep_policy(self) -> None:
+        self._track_quiet_task(self._apply_sleep_policy(), name="sleep-policy")
+
+    def _track_quiet_task(self, coro: Coroutine[Any, Any, None], *, name: str) -> None:
+        task = asyncio.create_task(coro, name=name)
+        self._quiet_tasks.add(task)
+        task.add_done_callback(self._quiet_tasks.discard)
+
+    async def _apply_sleep_policy(self) -> None:
+        """Push create and interrupt flags so an asleep session does not talk on its own."""
+        connection = self.connection
+        if connection is None:
+            return
+        respond = not sleep_mode.quiet()
+        try:
+            await connection.session.update(
+                session=RealtimeSessionCreateRequestParam(
+                    type="realtime",
+                    audio=RealtimeAudioConfigParam(
+                        input=RealtimeAudioConfigInputParam(
+                            turn_detection=server_turn_detection(respond=respond),
+                        ),
+                    ),
+                ),
+            )
+            logger.info("Updated turn detection respond=%s", respond)
+        except Exception as exc:
+            logger.warning("Failed to update turn detection: %s", exc)
+
+    async def _discard_asleep_audio(self) -> None:
+        """Drop an automatic reply without cutting off the scare lines."""
+        if self._exact_response_id is not None and self._active_response_id == self._exact_response_id:
+            return
+        await self._interrupt_playback(cancel_response_id=self._active_response_id)
+
+    async def _wait_for_played_audio(self) -> None:
+        """Wait until the scare line has finished playing."""
+        if not self.paced_playback:
+            queued_s = self._exact_audio_samples / self.SAMPLE_RATE
+            # Unpaced playback never publishes playback_until, so wait out the queued audio.
+            if queued_s > 0.0:
+                await asyncio.sleep(queued_s)
+            return
+        deadline = time.monotonic() + (self._exact_audio_samples / self.SAMPLE_RATE) + 8.0
+        idle_polls = 0
+        while time.monotonic() < deadline:
+            if self._playback_interrupted:
+                return
+            now = time.monotonic()
+            queued_s = self._exact_audio_samples / self.SAMPLE_RATE
+            started = self._exact_audio_started_at
+            samples_done_at = now if started is None else started + queued_s
+            still_playing = self.playback_pending_frames > 0 or self.playback_until > now or samples_done_at > now
+            if still_playing:
+                idle_polls = 0
+                await asyncio.sleep(0.05)
+                continue
+            # One extra poll: the play loop clears a frame before it publishes playback_until.
+            idle_polls += 1
+            if idle_polls < 2:
+                await asyncio.sleep(0.05)
+                continue
+            return
+        logger.warning("Timed out waiting for jump scare playback")
+
+    async def _speak_exact_scare(self) -> None:
+        """Speak the scare lines and wait until that audio finishes playing."""
+        self._accept_one_quiet_response = True
+        self._exact_audio_samples = 0
+        self._exact_audio_started_at = None
+        self._exact_speech_done = asyncio.Event()
+        try:
+            await self._safe_response_create(response=exact_scare_response())
+            await asyncio.wait_for(self._exact_speech_done.wait(), timeout=25.0)
+            await self._wait_for_played_audio()
+        except TimeoutError:
+            logger.warning("Timed out waiting for jump scare speech")
+            await self._wait_for_played_audio()
+        except Exception as exc:
+            logger.error("Jump scare speech failed: %s", exc)
+        finally:
+            self._accept_one_quiet_response = False
+            self._exact_speech_done = None
+            self._exact_response_id = None
+
+    async def _queue_wake_reply(self) -> None:
+        """Answer the wake phrase in character without calling tools."""
+        try:
+            instructions = get_session_instructions(self.instance_path)
+        except Exception as exc:
+            logger.warning("Could not load instructions for wake reply: %s", exc)
+            instructions = "You are Kevin. Use short fragments."
+        instructions = (
+            f"{instructions}\n\nThe user just asked you to wake up. You are awake now. "
+            "Reply in character in one short line. Do not call tools."
+        )
+        await self._safe_response_create(response={"tool_choice": "none", "instructions": instructions})
+
+    async def _wake_and_reply(self) -> None:
+        """Leave sticky sleep, play the wake motion, and answer in character."""
+        try:
+            result = await asyncio.to_thread(run_wake_motion, self.deps, "user asked to wake")
+            if isinstance(result, dict) and result.get("error"):
+                logger.error("Wake motion failed: %s", result["error"])
+                return
+            await self._apply_sleep_policy()
+            await self._queue_wake_reply()
+        except Exception as exc:
+            logger.error("Wake from sleep failed: %s", exc)
+
+    async def _run_jump_scare(self) -> None:
+        """Jump, say the scare lines, then sleep again unless a wake phrase arrived."""
+        if not sleep_mode.begin_scare():
+            logger.info("Jump scare already running; ignoring another trigger")
+            return
+        try:
+            logger.info("Jump scare sequence started")
+            await asyncio.to_thread(command_awake_pose, self.deps.reachy_mini, self.deps.movement_manager, SPRING_UP_S)
+            await self._speak_exact_scare()
+            if sleep_mode.take_wake_after_scare():
+                logger.info("Wake phrase ended jump scare")
+                result = await asyncio.to_thread(run_wake_motion, self.deps, "user asked to wake")
+                if isinstance(result, dict) and result.get("error"):
+                    logger.error("Wake after jump scare failed: %s", result["error"])
+                    return
+                await self._apply_sleep_policy()
+                await self._queue_wake_reply()
+            elif sleep_mode.in_jump_scare():
+                error = await asyncio.to_thread(play_sleep_pose, self.deps.reachy_mini, self.deps.movement_manager)
+                if error:
+                    logger.error("Jump scare could not return to sleep: %s", error)
+                else:
+                    logger.info("Jump scare returned to sleep")
+            else:
+                logger.info("Jump scare ended because sleep was cleared")
+        except Exception as exc:
+            logger.error("Jump scare sequence failed: %s", exc)
+            if sleep_mode.in_jump_scare():
+                try:
+                    await asyncio.to_thread(play_sleep_pose, self.deps.reachy_mini, self.deps.movement_manager)
+                except Exception as sleep_error:
+                    logger.error("Jump scare failed to return to sleep: %s", sleep_error)
+        finally:
+            sleep_mode.end_scare()
+
+    async def _handle_quiet_transcript(self, transcript: str) -> None:
+        """Apply sticky sleep and jump scare to one finished user transcript."""
+        asleep, jump_scare, scare_running = sleep_mode.snapshot()
+        action = quiet_transcript_action(
+            transcript,
+            asleep=asleep,
+            jump_scare=jump_scare,
+            scare_running=scare_running,
+        )
+        if action == "respond":
+            return
+        if action == "defer_wake":
+            sleep_mode.note_wake_after_scare()
+            logger.info("Wake phrase during jump scare; waking when the scare finishes")
+            return
+        if action == "scare":
+            logger.info("Jump scare word heard")
+            await self._discard_asleep_audio()
+            self._track_quiet_task(self._run_jump_scare(), name="jump-scare")
+            return
+        if action == "wake":
+            logger.info("Wake phrase accepted")
+            await self._discard_asleep_audio()
+            self._track_quiet_task(self._wake_and_reply(), name="wake-from-sleep")
+            return
+        logger.info("Staying asleep; ignoring transcript: %s", transcript)
+        await self._discard_asleep_audio()
 
     async def _cancel_partial_transcript_task(self) -> None:
         if self.partial_transcript_task and not self.partial_transcript_task.done():
@@ -631,6 +862,10 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
         """Prompt the model to open the conversation once the session is ready."""
         if self._startup_greeting_sent or not self.connection:
             return
+        if sleep_mode.quiet():
+            self._startup_greeting_sent = True
+            logger.info("Skipping startup greeting while asleep")
+            return
 
         greeting_prompt = get_session_greeting_prompt().strip()
         if not greeting_prompt:
@@ -769,6 +1004,9 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
             tool_result = {"error": "No result returned from tool execution"}
             tool_result_for_model = tool_result
 
+        if completed_tool.tool_name in {"go_to_sleep", "jump_scare"} and sleep_mode.quiet():
+            await self._interrupt_playback(cancel_response_id=self._active_response_id)
+
         # Connection may have closed while tool was running
         if not self.connection:
             logger.warning(
@@ -818,7 +1056,7 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
                 ),
             )
 
-            if model_result_submitted and completed_tool.tool_name == "camera" and "b64_im" in tool_result:
+            if model_result_submitted and isinstance(tool_result, dict) and "b64_im" in tool_result:
                 # use raw base64, don't json.dumps (which adds quotes)
                 b64_im = tool_result["b64_im"]
                 if not isinstance(b64_im, str):
@@ -901,6 +1139,7 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
 
             # Manage events received from the realtime server.
             self.connection = conn
+            self._loop = asyncio.get_running_loop()
             self._active_response_id = None
             self._audio_response_id = None
             self._discarded_response_ids.clear()
@@ -926,9 +1165,12 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
                         self._turn_user_done_at = None
                         self._turn_response_created_at = None
                         self._turn_first_audio_at = None
-                        await self._interrupt_playback()
-                        self._set_listening(server=True)
-                        logger.debug("User speech started")
+                        if sleep_mode.quiet():
+                            logger.debug("User speech started while asleep")
+                        else:
+                            await self._interrupt_playback()
+                            self._set_listening(server=True)
+                            logger.debug("User speech started")
 
                     if event.type == "input_audio_buffer.speech_stopped":
                         self._mark_activity("user_speech_stopped")
@@ -959,8 +1201,21 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
                             delta_ms = (self._turn_response_created_at - self._turn_user_done_at) * 1000
                             logger.info("Turn latency: response.created %.0f ms after user transcript", delta_ms)
                         logger.debug("Response created (active)")
+                        if self._accept_one_quiet_response or _response_purpose(event.response) == "exact_speech":
+                            self._accept_one_quiet_response = False
+                            self._exact_response_id = event.response.id
+                            logger.info("Playing forced speech response %s", event.response.id)
+                        elif sleep_mode.quiet():
+                            logger.info("Cancelling response while asleep")
+                            await self._interrupt_playback(cancel_response_id=event.response.id)
 
                     if event.type == "response.done":
+                        if (
+                            self._exact_speech_done is not None
+                            and self._exact_response_id is not None
+                            and event.response.id == self._exact_response_id
+                        ):
+                            self._exact_speech_done.set()
                         if self._active_response_id is not None and event.response.id != self._active_response_id:
                             continue
                         if event.response.id == self._active_response_id:
@@ -1017,11 +1272,17 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
 
                         await self.output_queue.put(AdditionalOutputs({"role": "user", "content": transcript}))
                         self._emit_transcript("user", transcript, True)
+                        try:
+                            await self._handle_quiet_transcript(transcript)
+                        except Exception as exc:
+                            logger.error("Sleep transcript handling failed: %s", exc)
 
                     # Handle assistant transcription
                     if event.type == "response.output_audio_transcript.done":
                         if event.response_id in self._discarded_response_ids:
                             continue
+                        if self._exact_response_id is not None and event.response_id == self._exact_response_id:
+                            logger.info("Forced speech transcript: %s", event.transcript)
                         self._mark_activity("assistant_transcript_done")
                         logger.debug(f"Assistant transcript: {event.transcript}")
                         await self.output_queue.put(
@@ -1042,6 +1303,10 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
                             delta_ms = (self._turn_first_audio_at - self._turn_user_done_at) * 1000
                             logger.info("Turn latency: first audio delta %.0f ms after user transcript", delta_ms)
                         self.playback_frame_epochs[id(decoded_pcm)] = self.playback_epoch
+                        if self._exact_response_id is not None and event.response_id == self._exact_response_id:
+                            if self._exact_audio_started_at is None:
+                                self._exact_audio_started_at = time.monotonic()
+                            self._exact_audio_samples += int(decoded_pcm.size)
                         if self.paced_playback:
                             self.playback_pending_frames += 1
                         await self.output_queue.put(
@@ -1210,7 +1475,12 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
                 self.paced_playback = False
                 local_speech = False
             self._set_listening(local=local_speech)
-            if self.paced_playback and self._local_vad is not None and not self._playback_interrupted:
+            if (
+                self.paced_playback
+                and self._local_vad is not None
+                and not self._playback_interrupted
+                and not sleep_mode.scare_in_progress()
+            ):
                 # Only duck: stopping waits for server VAD, so loud background speech cannot drop the turn.
                 self.playback_gain = 0.25 if detect_barge_in and self._local_vad.barge_in_candidate else 1.0
             self._report_vad()
@@ -1222,6 +1492,12 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
 
     async def shutdown(self) -> None:
         """Shutdown the handler."""
+        sleep_mode.clear_notifier(self._schedule_sleep_policy)
+        quiet_tasks = list(self._quiet_tasks)
+        for task in quiet_tasks:
+            task.cancel()
+        if quiet_tasks:
+            await asyncio.gather(*quiet_tasks, return_exceptions=True)
         self._reset_listening()
         self._local_vad = None
         # Unblock the response sender worker so it can exit

@@ -38,7 +38,12 @@ from numpy.typing import NDArray
 from reachy_mini import ReachyMini
 from reachy_mini.utils import create_head_pose
 from reachy_mini.motion.move import Move
-from reachy_mini.utils.interpolation import compose_world_offset, linear_pose_interpolation
+from reachy_mini.utils.interpolation import (
+    InterpolationTechnique,
+    time_trajectory,
+    compose_world_offset,
+    linear_pose_interpolation,
+)
 from reachy_mini_conversation_app.dance_emotion_moves import EmotionQueueMove
 
 
@@ -59,6 +64,7 @@ class BreathingMove(Move):  # type: ignore
         interpolation_start_pose: NDArray[np.float32],
         interpolation_start_antennas: Tuple[float, float],
         interpolation_duration: float = 1.0,
+        start_body_yaw: float = 0.0,
     ):
         """Initialize breathing move.
 
@@ -66,11 +72,13 @@ class BreathingMove(Move):  # type: ignore
             interpolation_start_pose: 4x4 matrix of current head pose to interpolate from
             interpolation_start_antennas: Current antenna positions to interpolate from
             interpolation_duration: Duration of interpolation to neutral (seconds)
+            start_body_yaw: Base yaw to return from, in radians
 
         """
         self.interpolation_start_pose = interpolation_start_pose
         self.interpolation_start_antennas = np.array(interpolation_start_antennas)
         self.interpolation_duration = interpolation_duration
+        self.start_body_yaw = start_body_yaw
 
         # Neutral positions for breathing base
         self.neutral_head_pose = create_head_pose(0, 0, 0, 0, 0, 0, degrees=True)
@@ -92,19 +100,21 @@ class BreathingMove(Move):  # type: ignore
         if t < self.interpolation_duration:
             # Phase 1: Interpolate to neutral base position
             interpolation_t = t / self.interpolation_duration
+            # Same ease as the look, so the base does not step to center ahead of the head.
+            progress = time_trajectory(interpolation_t, method=InterpolationTechnique.MIN_JERK)
 
-            # Interpolate head pose
+            # Yaw as a scalar so it tracks body yaw instead of taking a rotation that the IK unwinds.
             head_pose = linear_pose_interpolation(
                 self.interpolation_start_pose,
                 self.neutral_head_pose,
-                interpolation_t,
+                progress,
+                yaw_as_scalar=True,
             )
 
             # Interpolate antennas
-            antennas_interp = (
-                1 - interpolation_t
-            ) * self.interpolation_start_antennas + interpolation_t * self.neutral_antennas
+            antennas_interp = (1 - progress) * self.interpolation_start_antennas + progress * self.neutral_antennas
             antennas = antennas_interp.astype(np.float64)
+            body_yaw = self.start_body_yaw * (1.0 - progress)
 
         else:
             # Phase 2: Breathing patterns from neutral base
@@ -117,9 +127,10 @@ class BreathingMove(Move):  # type: ignore
             # Antenna sway (opposite directions)
             antenna_sway = self.antenna_sway_amplitude * np.sin(2 * np.pi * self.antenna_frequency * breathing_time)
             antennas = np.array([antenna_sway, -antenna_sway], dtype=np.float64)
+            body_yaw = 0.0
 
         # Return in official Move interface format: (head_pose, antennas_array, body_yaw)
-        return (head_pose, antennas, 0.0)
+        return (head_pose, antennas, body_yaw)
 
 
 def clone_full_body_pose(pose: FullBodyPose) -> FullBodyPose:
@@ -243,6 +254,14 @@ class MovementManager:
         """
         self._command_queue.put(("queue_move", move))
 
+    def play_now(self, move: Move) -> None:
+        """Drop queued motion and run this move on the next tick."""
+        self._command_queue.put(("play_now", move))
+
+    def install_pose(self, head: NDArray[np.float64], antennas: Tuple[float, float], body_yaw: float) -> None:
+        """Hold this full-body pose until a later move replaces it."""
+        self._command_queue.put(("install_pose", (head, antennas, body_yaw)))
+
     def clear_move_queue(self) -> None:
         """Stop the active move and discard any queued primary moves.
 
@@ -303,6 +322,18 @@ class MovementManager:
                 break
             self._handle_command(command, payload, current_time)
 
+    def _release_tracking(self) -> None:
+        """Drop a captured look so the commanded pose owns the head."""
+        self._track_anchor = None
+        self._is_speaking = False
+        if not self._head_tracking:
+            return
+        self._head_tracking = False
+        try:
+            self.current_robot.stop_head_tracking()
+        except Exception as exc:
+            logger.warning("Failed to stop head tracking: %s", exc)
+
     def _handle_command(self, command: str, payload: Any, current_time: float) -> None:
         """Handle a single cross-thread command."""
         if command == "queue_move":
@@ -324,6 +355,43 @@ class MovementManager:
                 )
             else:
                 logger.warning("Ignored queue_move command with invalid payload: %s", payload)
+        elif command == "play_now":
+            if not isinstance(payload, Move):
+                logger.warning("Ignored play_now command with invalid payload: %s", payload)
+                return
+            self._release_tracking()
+            self._is_listening = False
+            self._antenna_unfreeze_blend = 1.0
+            self._last_listening_blend_time = current_time
+            self.move_queue.clear()
+            self.state.current_move = None
+            self.state.move_start_time = None
+            self._breathing_active = False
+            self.move_queue.append(payload)
+            self.state.update_activity()
+            logger.debug("Playing move now, duration %ss", getattr(payload, "duration", "?"))
+        elif command == "install_pose":
+            try:
+                head, antennas, body_yaw = payload
+                pose = (
+                    np.asarray(head, dtype=np.float32).copy(),
+                    (float(antennas[0]), float(antennas[1])),
+                    float(body_yaw),
+                )
+            except (TypeError, ValueError, IndexError) as exc:
+                logger.warning("Ignored install_pose command: %s", exc)
+                return
+            self._release_tracking()
+            self._is_listening = False
+            self._antenna_unfreeze_blend = 1.0
+            self._last_listening_blend_time = current_time
+            self._listening_antennas = pose[1]
+            self.move_queue.clear()
+            self.state.current_move = None
+            self.state.move_start_time = None
+            self._breathing_active = False
+            self.state.last_primary_pose = clone_full_body_pose(pose)
+            self.state.update_activity()
         elif command == "clear_queue":
             self.move_queue.clear()
             self.state.current_move = None
@@ -428,7 +496,7 @@ class MovementManager:
                 try:
                     # These 2 functions return the latest available sensor data from the robot, but don't perform I/O synchronously.
                     # Therefore, we accept calling them inside the control loop.
-                    _, current_antennas = self.current_robot.get_current_joint_positions()
+                    head_joints, current_antennas = self.current_robot.get_current_joint_positions()
                     current_head_pose = self.current_robot.get_current_head_pose()
 
                     self._breathing_active = True
@@ -438,6 +506,7 @@ class MovementManager:
                         interpolation_start_pose=current_head_pose,
                         interpolation_start_antennas=current_antennas,
                         interpolation_duration=1.0,
+                        start_body_yaw=float(head_joints[0]),
                     )
                     self.move_queue.append(breathing_move)
                     logger.debug("Started breathing after %.1fs of inactivity", idle_for)

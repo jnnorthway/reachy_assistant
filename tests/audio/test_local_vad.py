@@ -126,11 +126,11 @@ def test_failed_download_does_not_load_unverified_model(model_cache: tuple[Path,
     assert {path.name for path in cache.iterdir()} <= {"silero_vad_16k_op15.onnx"}
 
 
-def test_barge_in_candidate_follows_speech_during_playback_only(
+def test_barge_in_candidate_needs_clear_sustained_speech(
     monkeypatch: pytest.MonkeyPatch, model_cache: tuple[Path, MagicMock]
 ) -> None:
-    """A candidate starts at 0.6, holds down to 0.45, clears after 64 ms below that, and never outside playback."""
-    probabilities = iter([0.5, 0.7, 0.5, 0.1, 0.1, 0.7, 0.7])
+    """A candidate needs 160 ms at 0.75, holds at 0.6, clears after 64 ms, and never outside playback."""
+    probabilities = iter([0.7, 0.8, 0.8, 0.8, 0.8, 0.8, 0.65, 0.1, 0.1, 0.1])
     session = MagicMock()
     session.run.side_effect = lambda *_args: [
         np.array([[next(probabilities)]], dtype=np.float32),
@@ -140,10 +140,10 @@ def test_barge_in_candidate_follows_speech_during_playback_only(
     detector = SileroVAD()
     chunk = np.zeros(512, dtype=np.int16)
     candidates = []
-    for _ in range(6):
+    for _ in range(9):
         detector.process(chunk, 16000, detect_barge_in=True)
         candidates.append(detector.barge_in_candidate)
-    assert candidates == [False, True, True, True, False, True]
+    assert candidates == [False, False, False, False, False, True, True, True, False]
     detector.process(chunk, 16000)
     assert not detector.barge_in_candidate
 

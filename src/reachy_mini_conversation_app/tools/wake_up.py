@@ -1,19 +1,45 @@
-import time
+import asyncio
 import logging
-from typing import Any, Dict
+from typing import Any
 
-from reachy_mini.utils import create_head_pose
+from reachy_mini_conversation_app.sleep_mode import WAKE_POSE_S, hold_sleep, sleep_mode, command_awake_pose
 from reachy_mini_conversation_app.tools.core_tools import Tool, ToolDependencies
 
 
 logger = logging.getLogger(__name__)
 
 
+def run_wake_motion(deps: ToolDependencies, reason: str) -> dict[str, Any]:
+    """Lift to the upright pose and clear sticky sleep when it succeeds."""
+    was_quiet = sleep_mode.quiet()
+    movement_manager = deps.movement_manager
+    try:
+        command_awake_pose(deps.reachy_mini, movement_manager, WAKE_POSE_S)
+        try:
+            deps.reachy_mini.enable_wobbling()
+        except Exception as wobble_error:
+            logger.debug("Error enabling wobbling after wake: %s", wobble_error)
+    except Exception as exc:
+        logger.error("wake_up failed: %s", exc)
+        if was_quiet:
+            try:
+                hold_sleep(deps.reachy_mini, movement_manager)
+            except Exception as sleep_error:
+                logger.error("Could not restore sleep after a failed wake: %s", sleep_error)
+        return {"error": f"wake_up failed: {type(exc).__name__}: {exc}"}
+    if was_quiet:
+        sleep_mode.wake()
+    return {"status": "success", "action": "wake_up", "reason": reason}
+
+
 class WakeUp(Tool):
-    """Wake Reachy Mini and enable motors."""
+    """Wake Reachy Mini, including from sticky sleep or jump scare."""
 
     name = "wake_up"
-    description = "Wake Reachy Mini and enable motors."
+    description = (
+        "Wake Reachy Mini and enable motors. "
+        "Use when the user clearly asks Kevin to wake up. This ends sleep and jump scare mode."
+    )
     parameters_schema = {
         "type": "object",
         "properties": {
@@ -25,35 +51,10 @@ class WakeUp(Tool):
         "required": [],
     }
 
-    async def __call__(self, deps: ToolDependencies, **kwargs: Any) -> Dict[str, Any]:
-        """Call the Reachy SDK wake helper."""
+    async def __call__(self, deps: ToolDependencies, **kwargs: Any) -> dict[str, Any]:
+        """Lift Reachy upright and end sticky sleep."""
         reason = kwargs.get("reason", "unspecified")
+        if not isinstance(reason, str) or not reason.strip():
+            reason = "unspecified"
         logger.info("Tool call: wake_up reason=%s", reason)
-
-        try:
-            movement_manager = deps.movement_manager
-            movement_manager.set_listening(False)
-            movement_manager.clear_move_queue()
-
-            # Explicitly re-enable torque first so wake motion can execute.
-            deps.reachy_mini.enable_motors()
-            # Torque enable is dispatched asynchronously; let it settle first.
-            time.sleep(0.2)
-
-            deps.reachy_mini.wake_up()
-
-            # Ensure we end in a stable neutral/idle pose after wake animation.
-            neutral_head_pose = create_head_pose(0, 0, 0, 0, 0, 0, degrees=True)
-            deps.reachy_mini.goto_target(
-                head=neutral_head_pose,
-                antennas=[-0.1745, 0.1745],
-                duration=0.8,
-                body_yaw=0.0,
-            )
-
-            # Keep moving state active briefly so idle logic doesn't interrupt recovery.
-            movement_manager.set_moving_state(3.6)
-            return {"status": "success", "action": "wake_up", "reason": reason}
-        except Exception as e:
-            logger.error("wake_up failed")
-            return {"error": f"wake_up failed: {type(e).__name__}: {e}"}
+        return await asyncio.to_thread(run_wake_motion, deps, reason)

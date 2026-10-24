@@ -12,6 +12,7 @@ from reachy_mini.reachy_mini import SLEEP_HEAD_POSE
 from reachy_mini.utils.interpolation import distance_between_poses
 from reachy_mini_conversation_app.config import config, set_custom_profile
 from reachy_mini_conversation_app.daemon_api import DaemonApiError, daemon_request
+from reachy_mini_conversation_app.sleep_mode import sleep_mode
 from reachy_mini_conversation_app.tool_spaces import migrate_bundled_tool_spaces
 from reachy_mini_conversation_app.profile_store import DEFAULT_PROFILE_NAME, migrate_legacy_profiles
 from reachy_mini_conversation_app.tools.core_tools import ToolDependencies, initialize_tools
@@ -120,6 +121,9 @@ def _is_sleep_head_pose(head_pose: npt.ArrayLike) -> bool:
 
 def wake_up_if_sleeping(robot: ReachyMini, logger: logging.Logger) -> bool:
     """Run the SDK wake-up movement when Reachy starts from the sleep pose."""
+    if sleep_mode.quiet():
+        logger.info("Sticky sleep is active; skipping startup wake-up.")
+        return False
     try:
         head_pose = robot.get_current_head_pose()
     except Exception as e:
