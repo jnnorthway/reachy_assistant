@@ -1,5 +1,5 @@
-import logging
 import math
+import logging
 from typing import Any, Dict, Literal
 
 from reachy_mini_conversation_app.tools.core_tools import Tool, ToolDependencies

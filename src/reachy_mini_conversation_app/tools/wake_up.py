@@ -1,5 +1,5 @@
-import logging
 import time
+import logging
 from typing import Any, Dict
 
 from reachy_mini.utils import create_head_pose

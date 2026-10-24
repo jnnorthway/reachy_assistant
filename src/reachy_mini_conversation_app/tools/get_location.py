@@ -1,7 +1,7 @@
-import logging
-import asyncio
-import urllib.request
 import json
+import asyncio
+import logging
+import urllib.request
 from typing import Any, Dict
 
 from reachy_mini_conversation_app.tools.core_tools import Tool, ToolDependencies
@@ -39,6 +39,7 @@ class GetLocation(Tool):
     }
 
     async def __call__(self, deps: ToolDependencies, **kwargs: Any) -> Dict[str, Any]:
+        """Look up an approximate location from the device IP address."""
         logger.info("Tool call: get_location")
         try:
             result = await asyncio.wait_for(

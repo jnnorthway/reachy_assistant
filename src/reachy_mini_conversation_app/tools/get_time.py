@@ -1,11 +1,11 @@
-import logging
 import asyncio
+import logging
 import datetime
 import zoneinfo
 from typing import Any, Dict
 
 from reachy_mini_conversation_app.tools.core_tools import Tool, ToolDependencies
-from reachy_mini_conversation_app.tools.get_location import _fetch_location, _GEOLOCATION_TIMEOUT_S
+from reachy_mini_conversation_app.tools.get_location import _GEOLOCATION_TIMEOUT_S, _fetch_location
 
 
 logger = logging.getLogger(__name__)
@@ -23,6 +23,7 @@ class GetTime(Tool):
     }
 
     async def __call__(self, deps: ToolDependencies, **kwargs: Any) -> Dict[str, Any]:
+        """Return the current local date and time, using IP geolocation for the timezone."""
         # Try to resolve timezone from IP location
         tz = None
         try:
