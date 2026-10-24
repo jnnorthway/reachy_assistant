@@ -11,9 +11,10 @@ logger = logging.getLogger(__name__)
 Direction = Literal["left", "right", "center"]
 
 # Body yaw is radians. Positive is left, matching the SDK joint convention.
+# Larger than a look so this is a deliberate base turn, still inside the ±160 degree stop.
 BODY_YAW: Dict[str, float] = {
-    "left": math.radians(30.0),
-    "right": math.radians(-30.0),
+    "left": math.radians(80.0),
+    "right": math.radians(-80.0),
     "center": 0.0,
 }
 
@@ -22,7 +23,10 @@ class TwistBody(Tool):
     """Twist the body left, right, or back to center."""
 
     name = "twist_body"
-    description = "Rotate your body (torso) left, right, or back to center."
+    description = (
+        "Rotate the lower body left, right, or back to center. "
+        "This turns the base itself, farther than looking left or right."
+    )
     parameters_schema = {
         "type": "object",
         "properties": {

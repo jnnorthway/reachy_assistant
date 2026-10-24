@@ -1,3 +1,4 @@
+import math
 from unittest.mock import MagicMock
 
 import pytest
@@ -41,6 +42,33 @@ async def test_move_head_reads_body_yaw_from_head_joints() -> None:
     await MoveHead()(deps, direction="left")
     queued_move = deps.movement_manager.queue_move.call_args.args[0]
     assert queued_move.start_body_yaw == 0.05
+
+
+@pytest.mark.asyncio
+async def test_move_head_left_turns_the_base() -> None:
+    """Looking left yaws the base and aims the head with it."""
+    deps = _deps()
+    await MoveHead()(deps, direction="left")
+    queued_move = deps.movement_manager.queue_move.call_args.args[0]
+    assert queued_move.target_body_yaw == pytest.approx(math.radians(50))
+
+
+@pytest.mark.asyncio
+async def test_move_head_up_keeps_the_current_base_angle() -> None:
+    """Tilting the head does not snap the base back to center."""
+    deps = _deps()
+    await MoveHead()(deps, direction="up")
+    queued_move = deps.movement_manager.queue_move.call_args.args[0]
+    assert queued_move.target_body_yaw == pytest.approx(0.05)
+
+
+@pytest.mark.asyncio
+async def test_move_head_front_centers_the_base() -> None:
+    """Looking front returns the base yaw to zero."""
+    deps = _deps()
+    await MoveHead()(deps, direction="front")
+    queued_move = deps.movement_manager.queue_move.call_args.args[0]
+    assert queued_move.target_body_yaw == 0.0
 
 
 @pytest.mark.asyncio

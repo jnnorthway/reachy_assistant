@@ -54,7 +54,7 @@ def _idle_do_nothing_args() -> dict[str, Any]:
 
 
 def _move_head_args() -> dict[str, Any]:
-    return {"direction": random.choice(tuple(MoveHead.DELTAS))}
+    return {"direction": random.choice(MoveHead.DIRECTIONS)}
 
 
 _IDLE_TOOL_CANDIDATES: Final[tuple[IdleToolCandidate, ...]] = (

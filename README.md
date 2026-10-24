@@ -225,7 +225,7 @@ Every bundled profile enables `head_tracking` by default; users can still disabl
 | `stop_emotion` | Clear queued emotions. | Core install only. |
 | `camera` | Capture the latest camera frame and analyze it with the selected realtime backend. | Core install only. Requires the camera (disable with `--no-camera`). |
 | `idle_do_nothing` | Explicitly remain idle during an idle turn. Not intended for normal conversation turns. | Core install only. |
-| `move_head` | Queue a head pose change (left/right/up/down/front). | Core install only. |
+| `move_head` | Look left, right, up, down, or front. Left and right rotate the base; up and down tilt the head. | Core install only. |
 | `head_tracking` | Follow the user's face with the head, or stop following. | Core install only. Requires a daemon with the `vision` extra and a camera. |
 | `go_to_sleep` | Run Reachy's sleep movement and stop the current app after an explicit user request. | Core install only. |
 | `sweep_look` | Sweep Reachy's head left, right, and back to center. | Shared tool, enabled by default in the default profile. |
